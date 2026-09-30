@@ -4,7 +4,7 @@ on:
 permissions:
   contents: read
 jobs:
-  verify:
+  contracts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,3 +38,12 @@ jobs:
           go-version-file: go.mod
       - name: Test native source stability (not bundle or GPU acceptance)
         run: go test -race ./internal/operation -count=1
+  verify:
+    if: ${{ always() }}
+    needs: [contracts, native-source]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require contract and native platform checks
+        run: |
+          test "${{ needs.contracts.result }}" = success
+          test "${{ needs.native-source.result }}" = success
