@@ -11,6 +11,10 @@ Source handles deny concurrent writes/deletion on Windows; macOS uses a native
 copy-on-write snapshot and refuses unsupported filesystems rather than copying
 the entire source. Native source checks run on both supported OS families;
 they are not FFmpeg bundle or GPU acceptance.
+The service-token transport uses Account HTTPS/client-secret-basic, bounded
+responses and exact recording scopes, refuses redirects/refresh/cookies, and
+redacts bearer output. Login commands, native secret storage and human OAuth
+are not yet integrated; this is not a usable unattended uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship an
 executable, verified FFmpeg bundle or complete preparation/upload workflow.

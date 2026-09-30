@@ -25,6 +25,8 @@ jobs:
         run: |
           GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/media-windows.test.exe" ./internal/media
           GOOS=darwin GOARCH=arm64 go test -c -o "$RUNNER_TEMP/media-darwin.test" ./internal/media
+          GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/auth-windows.test.exe" ./internal/auth
+          GOOS=darwin GOARCH=arm64 go test -c -o "$RUNNER_TEMP/auth-darwin.test" ./internal/auth
   native-source:
     strategy:
       fail-fast: false
