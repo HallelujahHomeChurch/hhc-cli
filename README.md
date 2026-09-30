@@ -7,6 +7,10 @@ HLS inventory/digest contract, independent source/package budgets and source
 rendition planning, bounded ffprobe metadata parsing and the fixed CPU encode
 arguments, measured-bandwidth master playlist builder and bounded streaming
 package inventory assembly, with actual 65-second dual-rendition tests.
+Source handles deny concurrent writes/deletion on Windows; macOS uses a native
+copy-on-write snapshot and refuses unsupported filesystems rather than copying
+the entire source. Native source checks run on both supported OS families;
+they are not FFmpeg bundle or GPU acceptance.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship an
 executable, verified FFmpeg bundle or complete preparation/upload workflow.
