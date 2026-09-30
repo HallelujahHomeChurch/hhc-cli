@@ -72,6 +72,15 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(before)
+	sourceFile, err := os.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, fingerprintErr := FingerprintSource(ctx, sourceFile)
+	closeErr := sourceFile.Close()
+	if fingerprintErr != nil || closeErr != nil || fingerprint.SHA256 != fmt.Sprintf("%x", hash) || fingerprint.SizeBytes != int64(len(before)) {
+		t.Fatalf("actual source fingerprint: %+v %v %v", fingerprint, fingerprintErr, closeErr)
+	}
 	metadata, err := ProbeSource(ctx, ffprobe, source)
 	if err != nil || metadata.Width != 1920 || metadata.Height != 1080 || metadata.FrameRate != 2 || metadata.DurationSeconds != 65 || !metadata.HasAudio {
 		t.Fatalf("actual source probe: %+v %v", metadata, err)
