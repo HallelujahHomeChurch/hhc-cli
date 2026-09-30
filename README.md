@@ -5,8 +5,10 @@ Recording preparation and authenticated publishing for HHC.
 Implementation is in progress. This producer checkpoint contains the versioned
 HLS inventory/digest contract, independent source/package budgets and source
 rendition planning, bounded ffprobe metadata parsing and the fixed CPU encode
-arguments and measured-bandwidth master playlist builder, with actual
-65-second dual-rendition tests. It does not yet ship an
+arguments, measured-bandwidth master playlist builder and bounded streaming
+package inventory assembly, with actual 65-second dual-rendition tests.
+Inventory assembly rejects missing/extra files, symlinks and size violations;
+it does not establish encoded-media readiness. It does not yet ship an
 executable, verified FFmpeg bundle or complete preparation/upload workflow.
 
 The approved target is Windows amd64 and macOS arm64, bundled FFmpeg, local HLS
