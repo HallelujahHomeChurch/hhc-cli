@@ -147,17 +147,11 @@ func ValidateRecordingInventory(inv RecordingPackageInventory) (int64, error) {
 	seenRenditions := make(map[string]bool)
 	var first RecordingRendition
 	for n, rendition := range inv.Renditions {
-		maxWidth, maxHeight := 1280, 720
-		if rendition.Name == "1080p" {
-			maxWidth, maxHeight = 1920, 1080
-		} else if rendition.Name != "720p" {
-			return invalid("rendition name")
-		}
 		if seenRenditions[rendition.Name] {
 			return invalid("duplicate rendition")
 		}
 		seenRenditions[rendition.Name] = true
-		if rendition.Width <= 0 || rendition.Width > maxWidth || rendition.Width%2 != 0 || rendition.Height <= 0 || rendition.Height > maxHeight || rendition.Height%2 != 0 || math.IsNaN(rendition.FrameRate) || math.IsInf(rendition.FrameRate, 0) || rendition.FrameRate <= 0 || rendition.FrameRate > 30 || math.IsNaN(rendition.DurationSeconds) || math.IsInf(rendition.DurationSeconds, 0) || rendition.DurationSeconds <= 0 || rendition.DurationSeconds > RecordingMaxDurationSeconds || rendition.SegmentCount != int(math.Ceil(rendition.DurationSeconds/30)) || rendition.AudioBitrate != 128_000 || rendition.VideoBitrate < 500_000 || rendition.VideoBitrate > 8_000_000 {
+		if !validRecordingRendition(rendition) {
 			return invalid("rendition metadata")
 		}
 		if n == 0 {

@@ -1,0 +1,180 @@
+package media
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCPUEncodeRejectsNetworkInputAndInvalidRendition(t *testing.T) {
+	r := RecordingRendition{Name: "720p", Width: 1280, Height: 720, FrameRate: 30, VideoBitrate: 1500000, AudioBitrate: 128000, DurationSeconds: 65, SegmentCount: 3}
+	for _, source := range []string{"https://example.invalid/source.mp4", "relative.mp4", ""} {
+		if _, err := CPUEncodeArguments(source, filepath.Join(t.TempDir(), "720p"), r); err == nil {
+			t.Fatal("accepted nonlocal source")
+		}
+	}
+	for _, mutate := range []func(*RecordingRendition){
+		func(r *RecordingRendition) { r.Width++ }, func(r *RecordingRendition) { r.FrameRate = math.NaN() },
+		func(r *RecordingRendition) { r.Name = "../escape" }, func(r *RecordingRendition) { r.VideoBitrate = 0 },
+		func(r *RecordingRendition) { r.AudioBitrate = 64000 }, func(r *RecordingRendition) { r.FrameRate = 60 },
+	} {
+		bad := r
+		mutate(&bad)
+		if _, err := CPUEncodeArguments(filepath.Join(t.TempDir(), "source.mp4"), t.TempDir(), bad); err == nil {
+			t.Fatalf("accepted bad rendition: %+v", bad)
+		}
+	}
+}
+
+// Explicit tools are a test fixture only; production must verify its bundle.
+func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
+	ffmpeg, ffprobe := os.Getenv("HHC_TEST_FFMPEG"), os.Getenv("HHC_TEST_FFPROBE")
+	if ffmpeg == "" || ffprobe == "" {
+		if os.Getenv("HHC_REQUIRE_MEDIA_TESTS") == "1" {
+			t.Fatal("media test tools required")
+		}
+		t.Skip("set absolute HHC_TEST_FFMPEG and HHC_TEST_FFPROBE for actual media checks")
+	}
+	if !filepath.IsAbs(ffmpeg) || !filepath.IsAbs(ffprobe) {
+		t.Fatal("absolute test tools required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	run := func(tool string, args ...string) []byte {
+		t.Helper()
+		out, err := exec.CommandContext(ctx, tool, args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("media fixture: %v: %s", err, out)
+		}
+		return out
+	}
+	dir := t.TempDir()
+	source := filepath.Join(dir, "聚會 原始.mp4")
+	run(ffmpeg, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r=2", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "65", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", source)
+	before, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(before)
+	plan, err := PlanSource(SourceInfo{Width: 1920, Height: 1080, FrameRate: 2, SampleAspectRatio: 1, DurationSeconds: 65, HasAudio: true}, DefaultEncodeOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var starts []float64
+	for _, r := range plan.Renditions {
+		output := filepath.Join(dir, r.Name)
+		if err := os.Mkdir(output, 0700); err != nil {
+			t.Fatal(err)
+		}
+		args, err := CPUEncodeArguments(source, output, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run(ffmpeg, args...)
+		playlistPath := filepath.Join(output, "index.m3u8")
+		playlist, err := os.ReadFile(playlistPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var durations []float64
+		for line := range strings.SplitSeq(string(playlist), "\n") {
+			if strings.HasPrefix(line, "#EXTINF:") {
+				d, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ","), 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				durations = append(durations, d)
+			}
+		}
+		if len(durations) != 3 || durations[0] != 30 || durations[1] != 30 || durations[2] != 5 || !strings.Contains(string(playlist), "#EXT-X-ENDLIST") || !strings.Contains(string(playlist), `URI="init.mp4"`) {
+			t.Fatalf("bad VOD: %s", playlist)
+		}
+		var probe struct {
+			Packets []struct {
+				Time  string `json:"pts_time"`
+				Flags string `json:"flags"`
+			} `json:"packets"`
+		}
+		if err := json.Unmarshal(run(ffprobe, "-v", "error", "-select_streams", "v:0", "-show_packets", "-show_entries", "packet=pts_time,flags", "-of", "json", playlistPath), &probe); err != nil {
+			t.Fatal(err)
+		}
+		var keys []float64
+		for _, packet := range probe.Packets {
+			if strings.Contains(packet.Flags, "K") {
+				pts, err := strconv.ParseFloat(packet.Time, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				keys = append(keys, pts)
+			}
+		}
+		if len(keys) != 3 || math.Abs(keys[1]-keys[0]-30) > 0.001 || math.Abs(keys[2]-keys[0]-60) > 0.001 {
+			t.Fatalf("unaligned keyframes %v", keys)
+		}
+		starts = append(starts, keys[0])
+		var media struct {
+			Streams []struct {
+				Type       string `json:"codec_type"`
+				Codec      string `json:"codec_name"`
+				Profile    string `json:"profile"`
+				Width      int    `json:"width"`
+				Height     int    `json:"height"`
+				SAR        string `json:"sample_aspect_ratio"`
+				Pixels     string `json:"pix_fmt"`
+				Rate       string `json:"r_frame_rate"`
+				SampleRate string `json:"sample_rate"`
+				Channels   int    `json:"channels"`
+			} `json:"streams"`
+		}
+		// Probe init plus a media fragment, as the Asset owner does. ffprobe's
+		// HLS demuxer can omit the AAC profile even when the MP4 reports it.
+		init, err := os.ReadFile(filepath.Join(output, "init.mp4"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fragment, err := os.ReadFile(filepath.Join(output, "seg-000000.m4s"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		probePath := filepath.Join(dir, r.Name+"-probe.mp4")
+		if err := os.WriteFile(probePath, append(init, fragment...), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(run(ffprobe, "-v", "error", "-show_streams", "-of", "json", probePath), &media); err != nil {
+			t.Fatal(err)
+		}
+		if len(media.Streams) != 2 {
+			t.Fatalf("unexpected streams %+v", media)
+		}
+		for _, s := range media.Streams {
+			switch s.Type {
+			case "video":
+				if s.Codec != "h264" || s.Width != r.Width || s.Height != r.Height || s.SAR != "1:1" || s.Pixels != "yuv420p" || s.Rate != "2/1" {
+					t.Fatalf("bad video %+v", s)
+				}
+			case "audio":
+				if s.Codec != "aac" || s.Profile != "LC" || s.SampleRate != "48000" || s.Channels != 2 {
+					t.Fatalf("bad audio %+v", s)
+				}
+			default:
+				t.Fatalf("unexpected stream %+v", s)
+			}
+		}
+		run(ffmpeg, "-v", "error", "-nostdin", "-i", playlistPath, "-f", "null", "-")
+	}
+	if len(starts) != 2 || math.Abs(starts[0]-starts[1]) > 0.001 {
+		t.Fatalf("renditions start differently %v", starts)
+	}
+	after, err := os.ReadFile(source)
+	if err != nil || sha256.Sum256(after) != hash {
+		t.Fatal("source changed")
+	}
+}
