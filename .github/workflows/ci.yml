@@ -1,0 +1,19 @@
+name: CI
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./... -count=1
+      - run: go vet ./...
+      - name: Cross-compile Windows amd64 and macOS arm64 contract checks
+        run: |
+          GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/media-windows.test.exe" ./internal/media
+          GOOS=darwin GOARCH=arm64 go test -c -o "$RUNNER_TEMP/media-darwin.test" ./internal/media
