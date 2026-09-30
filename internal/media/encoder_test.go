@@ -1,9 +1,11 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -57,6 +59,10 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		return out
 	}
 	dir := t.TempDir()
+	packageDir := filepath.Join(dir, "聚會 HLS")
+	if err := os.Mkdir(packageDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	source := filepath.Join(dir, "聚會 原始.mp4")
 	run(ffmpeg, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r=2", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "65", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", source)
 	before, err := os.ReadFile(source)
@@ -69,8 +75,9 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		t.Fatal(err)
 	}
 	var starts []float64
+	var measured []RenditionMedia
 	for _, r := range plan.Renditions {
-		output := filepath.Join(dir, r.Name)
+		output := filepath.Join(packageDir, r.Name)
 		if err := os.Mkdir(output, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -140,6 +147,21 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Fixture-only extraction from FFmpeg's actual AVCC header. Production
+		// preparation must use the bounded encoded-media validation path.
+		avcc := bytes.Index(init, []byte("avcC"))
+		if avcc < 0 || avcc+8 > len(init) || init[avcc+4] != 1 {
+			t.Fatal("missing actual AVC configuration")
+		}
+		var sizes []int64
+		for n := range durations {
+			info, err := os.Stat(filepath.Join(output, fmt.Sprintf("seg-%06d.m4s", n)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sizes = append(sizes, info.Size())
+		}
+		measured = append(measured, RenditionMedia{Rendition: r, SegmentBytes: sizes, SegmentDurations: durations, TargetDuration: 30, Codecs: fmt.Sprintf("avc1.%02x%02x%02x,mp4a.40.2", init[avcc+5], init[avcc+6], init[avcc+7])})
 		fragment, err := os.ReadFile(filepath.Join(output, "seg-000000.m4s"))
 		if err != nil {
 			t.Fatal(err)
@@ -172,6 +194,17 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 	}
 	if len(starts) != 2 || math.Abs(starts[0]-starts[1]) > 0.001 {
 		t.Fatalf("renditions start differently %v", starts)
+	}
+	master, err := BuildMasterPlaylist(measured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "master.m3u8"), master, 0600); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := BuildPackageInventory(ctx, packageDir, plan.Renditions, "cpu-hq-v1")
+	if err != nil || len(inv.Objects) != 11 || inv.InventoryDigest == "" {
+		t.Fatalf("actual HLS closure: %+v %v", inv, err)
 	}
 	after, err := os.ReadFile(source)
 	if err != nil || sha256.Sum256(after) != hash {
