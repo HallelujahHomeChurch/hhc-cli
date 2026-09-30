@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 )
 
 func TestCPUEncodeRejectsNetworkInputAndInvalidRendition(t *testing.T) {
@@ -70,7 +72,11 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(before)
-	plan, err := PlanSource(SourceInfo{Width: 1920, Height: 1080, FrameRate: 2, SampleAspectRatio: 1, DurationSeconds: 65, HasAudio: true}, DefaultEncodeOptions())
+	metadata, err := ProbeSource(ctx, ffprobe, source)
+	if err != nil || metadata.Width != 1920 || metadata.Height != 1080 || metadata.FrameRate != 2 || metadata.DurationSeconds != 65 || !metadata.HasAudio {
+		t.Fatalf("actual source probe: %+v %v", metadata, err)
+	}
+	plan, err := PlanSource(metadata, DefaultEncodeOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +91,9 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		run(ffmpeg, args...)
+		if _, err := operation.RunTool(ctx, ffmpeg, args, 1<<20); err != nil {
+			t.Fatalf("bounded native encode: %v", err)
+		}
 		playlistPath := filepath.Join(output, "index.m3u8")
 		playlist, err := os.ReadFile(playlistPath)
 		if err != nil {

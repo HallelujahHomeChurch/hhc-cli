@@ -7,6 +7,10 @@ HLS inventory/digest contract, independent source/package budgets and source
 rendition planning, bounded ffprobe metadata parsing and the fixed CPU encode
 arguments, measured-bandwidth master playlist builder and bounded streaming
 package inventory assembly, with actual 65-second dual-rendition tests.
+Local probe/encode processes use bounded output and native process-tree
+cancellation (Windows Job Objects and macOS process groups), not shell/PATH
+execution. The actual fixture probes its source through this runner before
+planning and uses it for both encoded renditions.
 Source handles deny concurrent writes/deletion on Windows; macOS uses a native
 copy-on-write snapshot and refuses unsupported filesystems rather than copying
 the entire source. Native source checks run on both supported OS families;

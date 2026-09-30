@@ -2,11 +2,54 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 )
+
+// ProbeSource must receive the stable handle's path, not an arbitrary URL.
+// The caller verifies ffprobe against the release bundle before invoking it.
+func ProbeSource(ctx context.Context, ffprobe, source string) (SourceInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return SourceInfo{}, err
+	}
+	if !filepath.IsAbs(source) {
+		return SourceInfo{}, ErrInvalidInput
+	}
+	switch strings.ToLower(filepath.Ext(source)) {
+	case ".mp4", ".mkv", ".mov":
+	default:
+		return SourceInfo{}, ErrUnsupportedSource
+	}
+	before, err := os.Lstat(source)
+	if err != nil {
+		return SourceInfo{}, err
+	}
+	if !before.Mode().IsRegular() {
+		return SourceInfo{}, ErrUnsupportedSource
+	}
+	if err := ValidateRecordingSourceSize(before.Size()); err != nil {
+		return SourceInfo{}, err
+	}
+	data, err := operation.RunTool(ctx, ffprobe, []string{
+		"-v", "error", "-protocol_whitelist", "file", "-format_whitelist", "mov,matroska", "-enable_drefs", "0",
+		"-show_streams", "-show_format", "-of", "json", source,
+	}, 1<<20)
+	if err != nil {
+		return SourceInfo{}, err
+	}
+	after, err := os.Lstat(source)
+	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return SourceInfo{}, operation.ErrSourceChanged
+	}
+	return ParseSourceProbe(bytes.NewReader(data))
+}
 
 // ParseSourceProbe accepts bounded local ffprobe metadata, not proof that a
 // source is stable or safe to open. The process runner must restrict protocols
