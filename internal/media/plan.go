@@ -34,12 +34,7 @@ type EncodePlan struct {
 // PlanSource consumes bounded probe metadata, not user-supplied upload claims.
 // No source is silently tone-mapped, rotated, upscaled or truncated.
 func PlanSource(source SourceInfo, options EncodeOptions) (EncodePlan, error) {
-	if source.Width <= 0 || source.Height <= 0 || source.Width > 8192 || source.Height > 8192 || !finitePositive(source.SampleAspectRatio) || source.SampleAspectRatio > 16 || !finitePositive(source.FrameRate) || !source.HasAudio || source.Rotation != 0 {
-		return EncodePlan{}, ErrUnsupportedSource
-	}
-	switch source.ColorTransfer {
-	case "", "unknown", "unspecified", "bt709", "smpte170m", "smpte240m", "gamma22", "gamma28", "iec61966-2-1":
-	default:
+	if !validSourceInfo(source) {
 		return EncodePlan{}, ErrUnsupportedSource
 	}
 	if options.SegmentSeconds != 30 || options.Encoder != "auto" || options.VideoBitrate720 < 500_000 || options.VideoBitrate720 > 8_000_000 || options.VideoBitrate1080 < options.VideoBitrate720 || options.VideoBitrate1080 > 8_000_000 {
@@ -73,6 +68,17 @@ func PlanSource(source SourceInfo, options EncodeOptions) (EncodePlan, error) {
 	}
 	plan.EstimatedBytes, plan.NearCapacity = size, size >= 9_000_000_000
 	return plan, nil
+}
+
+func validSourceInfo(source SourceInfo) bool {
+	if source.Width <= 0 || source.Height <= 0 || source.Width > 8192 || source.Height > 8192 || !finitePositive(source.SampleAspectRatio) || source.SampleAspectRatio > 16 || !finitePositive(source.FrameRate) || !finitePositive(source.DurationSeconds) || source.DurationSeconds > RecordingMaxDurationSeconds || !source.HasAudio || source.Rotation != 0 {
+		return false
+	}
+	switch source.ColorTransfer {
+	case "", "unknown", "unspecified", "bt709", "smpte170m", "smpte240m", "gamma22", "gamma28", "iec61966-2-1":
+		return true
+	}
+	return false
 }
 
 func finitePositive(value float64) bool {
