@@ -15,14 +15,14 @@ case "$(uname -s)" in
     media_suffix=''
     media_cflags='-mmacosx-version-min=12.0'
     media_ldflags='-mmacosx-version-min=12.0'
-    media_platform=(--enable-videotoolbox)
+    media_platform=(--enable-videotoolbox --enable-pthreads)
     ;;
   MINGW*|MSYS*)
     test "$(uname -m)" = x86_64
     media_suffix='.exe'
     media_cflags=''
     media_ldflags='-static'
-    media_platform=(--target-os=mingw32 --arch=x86_64)
+    media_platform=(--target-os=mingw32 --arch=x86_64 --enable-w32threads --disable-pthreads)
     ;;
   *) echo 'supported builders: macOS arm64 or Windows MSYS2 x64' >&2; exit 2;;
 esac
@@ -60,7 +60,7 @@ cd ../ffmpeg-8.1.3
 PKG_CONFIG_PATH="$media_build/prefix/lib/pkgconfig" ./configure \
   --prefix="$media_build/prefix" --disable-autodetect --enable-gpl --enable-libx264 \
   --disable-shared --enable-static --disable-network --disable-ffplay --disable-doc \
-  --disable-debug --enable-pthreads --extra-cflags="$media_cflags" \
+  --disable-debug --extra-cflags="$media_cflags" \
   --extra-ldflags="$media_ldflags" --pkg-config-flags=--static "${media_platform[@]}"
 make -j 3 ffmpeg"$media_suffix" ffprobe"$media_suffix"
 cp ffmpeg"$media_suffix" ffprobe"$media_suffix" "$media_build/bundle/ffmpeg/"
