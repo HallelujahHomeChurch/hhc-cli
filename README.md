@@ -21,16 +21,18 @@ redacts bearer output. The human transport uses PKCE S256, a bounded one-shot
 loopback callback and a system-browser launcher; `NoInput` never starts it.
 Human renewal makes one noninteractive refresh request, requires the current
 issued scope, rejects scope escalation and returns the rotated credential even
-when only `offline_access` remains. The profile owner must serialize renewal
-and durably save that credential before any recording action; this storage
-integration is still pending. A lost refresh response requires login, not
-automatic reuse of the consumed credential or a browser fallback.
+when only `offline_access` remains. Profiles hold an OS lock and save a rotation
+fence before exchange, then save the new credential before returning its token.
+A crash or lost response requires login instead of replaying a consumed token.
 Human revocation uses the existing Account native revoke endpoint once, with
-no redirect, browser or credential echo. The future profile logout must clear
-local credentials even when remote revocation cannot be confirmed.
-Native secret storage and login commands are not yet integrated; this is not
-a usable unattended uploader. Simulated browser redirects are not real login
-or Credential Manager/Keychain acceptance.
+no redirect, browser or credential echo. Profile logout clears local credentials
+even when remote revocation cannot be confirmed and reports that failure.
+Credentials are one atomic native item per lowercase profile, held in Windows
+Credential Manager or macOS Keychain, with no plaintext fallback or GUI prompt.
+macOS requires a cgo-enabled native build linked to Apple's frameworks. Native
+store tests use disposable fixture entries; real agent logon contexts and
+credential access across signed application updates still need acceptance.
+CLI commands are not yet integrated; this is not a usable unattended uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship an
 executable, verified FFmpeg bundle or complete preparation/upload workflow.
