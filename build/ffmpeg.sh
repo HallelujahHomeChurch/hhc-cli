@@ -69,6 +69,7 @@ if test "$media_suffix" = .exe; then
   cp -R amf-headers-v1.5.3/AMF "$media_build/prefix/include/"
   cmake -G Ninja -S libvpl-2.17.0 -B vpl-build \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$media_build/prefix" \
+    -DVPL_PKGCONFIG_PRIVATE_LIBS=-lstdc++ \
     -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF \
     -DBUILD_EXAMPLES=OFF -DINSTALL_EXAMPLES=OFF -DBUILD_EXPERIMENTAL=OFF
   cmake --build vpl-build --parallel 3
