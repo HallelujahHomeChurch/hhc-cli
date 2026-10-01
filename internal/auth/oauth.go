@@ -185,6 +185,45 @@ func validDeviceID(id string) bool {
 
 func (c *HumanClient) exchangeCode(ctx context.Context, code, verifier, redirect, device, requestedScope string) (HumanCredentials, error) {
 	form := url.Values{"grant_type": {"authorization_code"}, "client_id": {"hhc-cli"}, "code": {code}, "redirect_uri": {redirect}, "code_verifier": {verifier}, "device_id": {device}, "device_name": {"HHC CLI"}}
+	return c.exchangeHuman(ctx, form, requestedScope, false)
+}
+
+// Refresh makes one noninteractive rotation attempt. The profile owner must
+// serialize it and durably save the returned credential before using its token.
+// A successful response may retain only offline_access after grant revocation;
+// save that rotation before reporting permission_denied for a recording action.
+func (c *HumanClient) Refresh(ctx context.Context, previous HumanCredentials, device string) (HumanCredentials, error) {
+	if err := ctx.Err(); err != nil {
+		return HumanCredentials{}, err
+	}
+	if !validDeviceID(device) || len(previous.refresh) > 4096 || !bearerPattern.MatchString(previous.refresh) {
+		return HumanCredentials{}, ErrInvalidAuthInput
+	}
+	var scopes []string
+	var offline bool
+	for _, scope := range strings.Fields(previous.access.scope) {
+		if scope == "offline_access" {
+			if offline {
+				return HumanCredentials{}, ErrInvalidAuthInput
+			}
+			offline = true
+		} else {
+			scopes = append(scopes, scope)
+		}
+	}
+	if !offline {
+		return HumanCredentials{}, ErrInvalidAuthInput
+	}
+	if len(scopes) > 0 {
+		if _, err := recordingScopes(scopes); err != nil {
+			return HumanCredentials{}, err
+		}
+	}
+	form := url.Values{"grant_type": {"refresh_token"}, "client_id": {"hhc-cli"}, "refresh_token": {previous.refresh}, "device_id": {device}}
+	return c.exchangeHuman(ctx, form, previous.access.scope, true)
+}
+
+func (c *HumanClient) exchangeHuman(ctx context.Context, form url.Values, requestedScope string, refreshing bool) (HumanCredentials, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return HumanCredentials{}, ErrInvalidAuthInput
@@ -238,7 +277,10 @@ func (c *HumanClient) exchangeCode(ctx context.Context, code, verifier, redirect
 		}
 		seen[scope] = true
 	}
-	if !seen["offline_access"] || len(actual) < 2 {
+	if refreshing && !seen["offline_access"] {
+		return HumanCredentials{}, ErrInvalidAuthResponse
+	}
+	if !refreshing && (!seen["offline_access"] || len(actual) < 2) {
 		return HumanCredentials{}, ErrPermissionDenied
 	}
 	if wire.TokenType != "Bearer" || len(wire.AccessToken) > 16384 || !bearerPattern.MatchString(wire.AccessToken) || len(wire.RefreshToken) > 4096 || !bearerPattern.MatchString(wire.RefreshToken) || wire.ExpiresIn <= 0 || wire.ExpiresIn > 86400 || wire.IDToken != "" || wire.Error != "" || len(response.Header.Values("Set-Cookie")) > 0 {

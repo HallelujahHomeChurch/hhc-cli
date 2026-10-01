@@ -17,6 +17,80 @@ import (
 	"time"
 )
 
+func TestHumanRefreshRotatesWithoutBrowserOrRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name, scope string
+		status      int
+		want        error
+	}{
+		{"reduced", "cms:recordings:read offline_access", 200, nil},
+		{"all recording grants removed", "offline_access", 200, nil},
+		{"escalated", "cms:recordings:publish offline_access", 200, ErrInvalidAuthResponse},
+		{"missing offline", "cms:recordings:read", 200, ErrInvalidAuthResponse},
+		{"expired refresh", "", 400, ErrAuthenticationRequired},
+		{"unavailable", "", 503, ErrAuthUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if err := r.ParseForm(); err != nil {
+					t.Error(err)
+					return
+				}
+				if r.Method != "POST" || len(r.PostForm) != 4 || r.PostForm.Get("grant_type") != "refresh_token" || r.PostForm.Get("client_id") != "hhc-cli" || r.PostForm.Get("refresh_token") != "old-refresh" || r.PostForm.Get("device_id") != strings.Repeat("d", 43) || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
+					t.Error("invalid native refresh request")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				w.WriteHeader(tc.status)
+				if tc.status == 400 {
+					fmt.Fprint(w, `{"error":"invalid_grant","error_description":"old-refresh"}`)
+					return
+				}
+				fmt.Fprintf(w, `{"access_token":"renewed-bearer","token_type":"Bearer","expires_in":900,"scope":%q,"refresh_token":"new-refresh"}`, tc.scope)
+			}))
+			defer server.Close()
+			client := NewHumanClient()
+			client.http.Transport = server.Client().Transport
+			client.tokenEndpoint = server.URL
+			client.openBrowser = func(context.Context, string) error { t.Error("refresh opened browser"); return nil }
+			old := HumanCredentials{access: Token{scope: "cms:recordings:read offline_access"}, refresh: "old-refresh"}
+			got, err := client.Refresh(context.Background(), old, strings.Repeat("d", 43))
+			if !errors.Is(err, tc.want) || calls.Load() != 1 {
+				t.Fatalf("refresh: %v, calls=%d", err, calls.Load())
+			}
+			if err == nil && (got.RefreshToken() != "new-refresh" || got.AccessToken().Scope() != tc.scope || got.AccessToken().Bearer() != "renewed-bearer") {
+				t.Error("lost rotated credential or current scope")
+			}
+			if err != nil && got.RefreshToken() != "" {
+				t.Error("returned credential after failure")
+			}
+			if old.RefreshToken() != "old-refresh" {
+				t.Error("mutated old credential")
+			}
+		})
+	}
+}
+
+func TestHumanRefreshRejectsInvalidLocalCredentials(t *testing.T) {
+	client := NewHumanClient()
+	// An unreachable endpoint makes an accidental request fail distinctly from
+	// the required local input rejection.
+	client.tokenEndpoint = "https://127.0.0.1:1"
+	for _, scope := range []string{"", "cms:recordings:read", "offline_access offline_access", "offline_access iam:users:write", "offline_access cms:recordings:read cms:recordings:read"} {
+		_, err := client.Refresh(context.Background(), HumanCredentials{access: Token{scope: scope}, refresh: "refresh"}, strings.Repeat("d", 43))
+		if !errors.Is(err, ErrInvalidAuthInput) {
+			t.Errorf("accepted invalid saved scope: %v", err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Refresh(ctx, HumanCredentials{}, ""); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled refresh: %v", err)
+	}
+}
+
 func TestLoopbackPKCEStateAndSingleExchange(t *testing.T) {
 	var challenge, redirect, callbackBody string
 	var exchanges atomic.Int32
