@@ -65,7 +65,9 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 		return result, err
 	}
 	if state.RecordingID == "" {
-		r, err := c.CreateRecording(ctx, state.Intent.Title, state.OperationID+":create")
+		r, err := retryControl(ctx, func() (api.Recording, error) {
+			return c.CreateRecording(ctx, state.Intent.Title, state.OperationID+":create")
+		})
 		if err != nil {
 			return result, err
 		}
@@ -75,7 +77,9 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 		}
 	}
 	if state.PackageID == "" {
-		pkg, err := c.CreatePackage(ctx, state.RecordingID, inv, state.OperationID+":package")
+		pkg, err := retryControl(ctx, func() (api.Package, error) {
+			return c.CreatePackage(ctx, state.RecordingID, inv, state.OperationID+":package")
+		})
 		if err != nil {
 			return result, err
 		}
@@ -95,6 +99,10 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 	}
 	defer root.Close()
 	completionAccepted := false
+	retries := 0
+	resigned := false
+	pollDelay := 2 * time.Second
+reconcile:
 	for {
 		pkg, confirmed, err := confirmedPackage(ctx, c, state, objects)
 		if err != nil {
@@ -111,30 +119,13 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 				result.RequestedActionSatisfied = true
 				return result, nil
 			}
-			if state.PublishExpectedVersion == 0 {
-				r, err := c.GetRecording(ctx, state.RecordingID)
-				if err != nil {
-					return result, err
-				}
-				if r.PackageID != state.PackageID || r.Status != "draft" {
-					return result, ErrOperationConflict
-				}
-				state.PublishExpectedVersion = r.Version
-				if err := j.Save(state); err != nil {
-					return result, err
-				}
+			published, err := Publish(ctx, c, j)
+			if published.Outcome != "" {
+				result.Publication = &published
+				result.PublicationState = published.Outcome
 			}
-			published, err := c.PublishRecording(ctx, state.RecordingID, state.PublishExpectedVersion, state.OperationID+":publish")
 			if err != nil {
 				return result, err
-			}
-			if published.Receipt.PackageID != state.PackageID {
-				return result, api.ErrInvalidResponse
-			}
-			result.Publication = &published
-			result.PublicationState = published.Outcome
-			if published.Outcome != "published" {
-				return result, &api.Error{Code: "state_changed"}
 			}
 			result.RequestedActionSatisfied = true
 			return result, nil
@@ -158,15 +149,35 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 				}
 			}
 			for start := 0; start < len(missing); start += 100 {
-				signed, err := c.SignPackage(ctx, state.RecordingID, state.PackageID, missing[start:min(start+100, len(missing))])
+				signed, err := retryControl(ctx, func() ([]api.SignedObject, error) {
+					return c.SignPackage(ctx, state.RecordingID, state.PackageID, missing[start:min(start+100, len(missing))])
+				})
 				if err != nil {
 					return result, err
 				}
 				if err := uploadBatch(ctx, u, root, state.PackageID, objects, signed); err != nil {
+					if errors.Is(err, ErrUploadURLRejected) && !resigned {
+						resigned = true
+						continue reconcile
+					}
+					if transient(err) && retries < 2 {
+						if waitErr := waitRetry(ctx, err, retries); waitErr != nil {
+							return result, waitErr
+						}
+						retries++
+						continue reconcile
+					}
 					return result, err
 				}
 			}
 			if _, err := c.CompletePackage(ctx, state.RecordingID, state.PackageID); err != nil {
+				if transient(err) && retries < 2 {
+					if waitErr := waitRetry(ctx, err, retries); waitErr != nil {
+						return result, waitErr
+					}
+					retries++
+					continue reconcile
+				}
 				return result, err
 			}
 			completionAccepted = true
@@ -174,13 +185,10 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 		case "freezing", "validating":
 			result.TransferState = "complete"
 			result.ValidationState = pkg.State
-			timer := time.NewTimer(2 * time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return result, ctx.Err()
-			case <-timer.C:
+			if err := waitContext(ctx, pollDelay); err != nil {
+				return result, err
 			}
+			pollDelay = min(30*time.Second, pollDelay*2)
 		default:
 			return result, api.ErrInvalidResponse
 		}
@@ -191,7 +199,7 @@ func confirmedPackage(ctx context.Context, c *api.Client, state JournalState, ob
 	confirmed := make(map[string]bool)
 	cursor := ""
 	for {
-		pkg, err := c.PackageStatus(ctx, state.RecordingID, state.PackageID, cursor)
+		pkg, err := retryControl(ctx, func() (api.Package, error) { return c.PackageStatus(ctx, state.RecordingID, state.PackageID, cursor) })
 		if err != nil {
 			return api.Package{}, nil, err
 		}

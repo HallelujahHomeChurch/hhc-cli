@@ -155,6 +155,11 @@ func TestNativeServiceCommandsUseCredentialStoreAndRedactSecret(t *testing.T) {
 			if code != 4 || !strings.Contains(out.String(), `"code":"permission_denied"`) {
 				t.Fatalf("upload did not preflight scope: %d %s", code, out.String())
 			}
+			out.Reset()
+			code = Run(context.Background(), []string{"recordings", "publish", "00000000-0000-4000-8000-000000000041", "--operation-id", "00000000-0000-4000-8000-000000000082", "--profile", profile, "--json", "--no-input"}, nil, &out, &diagnostics, "test")
+			if code != 4 || !strings.Contains(out.String(), `"code":"permission_denied"`) {
+				t.Fatalf("publish did not preflight scope: %d %s", code, out.String())
+			}
 		}
 	}
 	if _, err := store.Load(profile); err != auth.ErrCredentialNotFound {

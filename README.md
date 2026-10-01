@@ -54,8 +54,11 @@ identity, content digest and publication precondition; server paging determines
 missing objects, with at most three isolated PUTs and 100 signed objects per batch.
 The command waits for remote ready, preserves user-owned packages and never
 interprets 202 as completion. Interrupted operations keep their original key.
-Local preparation/bundle integration, bounded transient retry/re-sign, standalone
-publication and managed temporary cleanup are still being implemented; these
+`recordings publish ID --profile NAME --operation-id UUID` uses the same durable
+publication path. Transient control calls have three attempts with bounded backoff
+and Retry-After; ambiguous completion first queries server status. A rejected
+upload URL is re-signed only once. Permission and state conflicts never retry.
+Local preparation/bundle integration and managed temporary cleanup are still being implemented; these
 development commands are not a released end-to-end uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship a release,

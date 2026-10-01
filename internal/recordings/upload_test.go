@@ -21,14 +21,19 @@ import (
 
 func TestUploadResumesServerConfirmedPackageAndWaitsForReady(t *testing.T) {
 	for _, missing := range []bool{false, true} {
-		t.Run(fmt.Sprint(missing), func(t *testing.T) { testUploadResume(t, missing) })
+		t.Run(fmt.Sprint(missing), func(t *testing.T) { testUploadResume(t, missing, 0, false, false) })
 	}
+	for _, rejections := range []int{1, 2} {
+		t.Run(fmt.Sprintf("url-rejections-%d", rejections), func(t *testing.T) { testUploadResume(t, true, rejections, false, false) })
+	}
+	t.Run("lost-complete-response", func(t *testing.T) { testUploadResume(t, false, 0, true, false) })
+	t.Run("publish-ready", func(t *testing.T) { testUploadResume(t, false, 0, false, true) })
 }
 
-func testUploadResume(t *testing.T, missing bool) {
+func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete bool, publish bool) {
 	intent := journalIntent(t)
 	intent.Prepare = false
-	intent.Publish = false
+	intent.Publish = publish
 	intent.Input = t.TempDir()
 	paths := []string{"master.m3u8", "720p/index.m3u8", "720p/init.mp4", "720p/seg-000000.m4s"}
 	if err := os.Mkdir(filepath.Join(intent.Input, "720p"), 0700); err != nil {
@@ -63,12 +68,17 @@ func testUploadResume(t *testing.T, missing bool) {
 	completed := false
 	queries := 0
 	puts, signs := 0, 0
+	publications := 0
+	scopes := []string{"cms:recordings:read", "cms:recordings:write"}
+	if publish {
+		scopes = append(scopes, "cms:recordings:publish")
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/account/v1/oauth/token" {
 			w.Header().Set("Cache-Control", "no-store")
-			fmt.Fprintf(w, `{"access_token":"fixture","token_type":"Bearer","expires_in":600,"scope":"cms:recordings:read cms:recordings:write","principal":{"type":"service","id":%q,"client_id":"client","credential_id":"00000000-0000-4000-8000-000000000012","credential_expires_at":%q}}`, intent.PrincipalID, now.Add(time.Hour).Format(time.RFC3339))
+			fmt.Fprintf(w, `{"access_token":"fixture","token_type":"Bearer","expires_in":600,"scope":%q,"principal":{"type":"service","id":%q,"client_id":"client","credential_id":"00000000-0000-4000-8000-000000000012","credential_expires_at":%q}}`, strings.Join(scopes, " "), intent.PrincipalID, now.Add(time.Hour).Format(time.RFC3339))
 			return
 		}
 		if r.Method == "PUT" {
@@ -77,6 +87,10 @@ func testUploadResume(t *testing.T, missing bool) {
 			if !missing || string(body) != "master.m3u8" || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
 				t.Error("unsafe or redundant byte upload")
 			}
+			if puts <= rejections {
+				w.WriteHeader(403)
+				return
+			}
 			w.WriteHeader(200)
 			return
 		}
@@ -84,6 +98,19 @@ func testUploadResume(t *testing.T, missing bool) {
 			t.Error("missing auth")
 		}
 		base := "/api/admin/recordings/" + state.RecordingID + "/packages/" + state.PackageID
+		if r.URL.Path == "/api/admin/recordings/"+state.RecordingID {
+			fmt.Fprintf(w, `{"data":{"id":%q,"status":"draft","version":4,"packageId":%q,"readyAt":%q,"expiresAt":%q}}`, state.RecordingID, state.PackageID, now.Format(time.RFC3339), now.Add(30*24*time.Hour).Format(time.RFC3339))
+			return
+		}
+		if r.URL.Path == "/api/admin/recordings/"+state.RecordingID+"/publish" {
+			publications++
+			if !completed || r.Method != "POST" || r.Header.Get("If-Match") != `"4"` || r.Header.Get("Idempotency-Key") != state.OperationID+":publish" {
+				t.Error("incorrect publication intent")
+			}
+			expiry := now.Add(30 * 24 * time.Hour)
+			json.NewEncoder(w).Encode(map[string]any{"data": api.PublishResult{Receipt: api.PublishReceipt{OperationKey: state.OperationID + ":publish", ActorType: intent.PrincipalType, ActorID: intent.PrincipalID, RecordingID: state.RecordingID, PackageID: state.PackageID, ExpectedVersion: 4, PublishedVersion: 5, PublishedAt: now}, Current: api.Recording{ID: state.RecordingID, Status: "published", Version: 5, PackageID: state.PackageID, ReadyAt: &now, ExpiresAt: &expiry}, Outcome: "published"}})
+			return
+		}
 		value := api.Package{PackageID: state.PackageID, SessionID: state.PackageID, RecordingID: state.RecordingID, State: "uploading", ExpiresAt: now.Add(time.Hour), ConfirmedObjects: paths}
 		switch {
 		case r.Method == "GET" && r.URL.Path == base:
@@ -98,8 +125,15 @@ func testUploadResume(t *testing.T, missing bool) {
 				value.MediaExpiresAt = &expiry
 			}
 		case r.Method == "POST" && r.URL.Path == base+"/complete":
+			if completed {
+				t.Error("completion replayed without state reconciliation")
+			}
 			completed = true
 			value.State = "freezing"
+			if lostComplete {
+				w.WriteHeader(503)
+				return
+			}
 			w.WriteHeader(202)
 		case r.Method == "POST" && r.URL.Path == base+"/sign":
 			signs++
@@ -125,18 +159,27 @@ func testUploadResume(t *testing.T, missing bool) {
 	previous := http.DefaultTransport
 	http.DefaultTransport = fixtureTransport{origin, server.Client().Transport}
 	defer func() { http.DefaultTransport = previous }()
-	token, err := auth.NewServiceClient().Exchange(context.Background(), "client", "fixture", []string{"cms:recordings:read", "cms:recordings:write"})
+	token, err := auth.NewServiceClient().Exchange(context.Background(), "client", "fixture", scopes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	value, err := UploadPrepared(ctx, api.NewClient(token, nil), NewUploader(), j)
-	if err != nil || value.Package.State != "ready" || queries != 2 || !completed {
+	if rejections == 2 {
+		if err != ErrUploadURLRejected || puts != 2 || signs != 2 || completed {
+			t.Fatalf("unbounded re-sign puts=%d signs=%d completed=%v err=%v", puts, signs, completed, err)
+		}
+		return
+	}
+	if err != nil || value.Package.State != "ready" || queries != 2+rejections || !completed {
 		t.Fatalf("upload result %+v %v queries=%d", value, err, queries)
 	}
-	if missing && (puts != 1 || signs != 1) || !missing && (puts != 0 || signs != 0) {
+	if missing && (puts != 1+rejections || signs != 1+rejections) || !missing && (puts != 0 || signs != 0) {
 		t.Fatalf("wrong transfer counts: puts=%d signs=%d", puts, signs)
+	}
+	if !value.RequestedActionSatisfied || publish && (publications != 1 || j.State().PublishExpectedVersion != 4) {
+		t.Fatal("publication was not confirmed or persisted")
 	}
 	if _, err := os.Stat(filepath.Join(intent.Input, "package.json")); err != nil {
 		t.Fatal("deleted user package")

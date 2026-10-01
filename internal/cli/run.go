@@ -79,6 +79,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fmt.Fprintln(output, "Usage: hhc version [--json]\n       hhc auth login|status|logout [--profile NAME] [--json] [--no-input]\n\nLogin: --service-principal --client-id ID [--secret-stdin]\n       --scope 'cms:recordings:read cms:recordings:write cms:recordings:publish'\n\nHuman login opens the system browser. Service secrets are hidden; never use a secret argument.")
 		fmt.Fprintln(output, "\nRecording metadata: hhc recordings get ID [--profile NAME] [--json] [--no-input]")
 		fmt.Fprintln(output, "Upload package: hhc recordings upload DIRECTORY --title TITLE --profile NAME --operation-id UUID [--publish] [--timeout 4h] [--json] [--no-input]\nResume: hhc recordings resume UUID --profile NAME [--timeout 4h] [--json] [--no-input]")
+		fmt.Fprintln(output, "Publish: hhc recordings publish ID --profile NAME --operation-id UUID [--timeout 4h] [--json] [--no-input]")
 		return 0
 	}
 	var flags []string
@@ -95,10 +96,16 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		if !api.ValidRecordingID(recordingID) {
 			return finish(auth.ErrInvalidAuthInput)
 		}
-	} else if len(args) >= 3 && args[0] == "recordings" && slices.Contains([]string{"upload", "resume"}, args[1]) {
+	} else if len(args) >= 3 && args[0] == "recordings" && slices.Contains([]string{"upload", "resume", "publish"}, args[1]) {
 		r.Command, recordingInput, flags = "recordings "+args[1], args[2], args[3:]
 		if args[1] == "resume" {
 			operationID = recordingInput
+		}
+		if args[1] == "publish" {
+			publish = true
+			if !api.ValidRecordingID(recordingInput) {
+				return finish(auth.ErrInvalidAuthInput)
+			}
 		}
 	} else {
 		return finish(auth.ErrInvalidAuthInput)
@@ -124,7 +131,10 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fs.StringVar(&operationID, "operation-id", "", "")
 		fs.BoolVar(&publish, "publish", false, "")
 	}
-	if r.Command == "recordings upload" || r.Command == "recordings resume" {
+	if r.Command == "recordings publish" {
+		fs.StringVar(&operationID, "operation-id", "", "")
+	}
+	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" {
 		fs.DurationVar(&timeout, "timeout", 4*time.Hour, "")
 	}
 	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 {
@@ -139,7 +149,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		}{version, runtime.GOOS + "/" + runtime.GOARCH}
 		return finish(nil)
 	}
-	if r.Command == "recordings upload" || r.Command == "recordings resume" {
+	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" {
 		explicitProfile := false
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "profile" {
@@ -195,7 +205,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	profiles := auth.NewProfiles(filepath.Join(directory, "HHC", "cli", "profiles"))
 	var token auth.Token
 	switch r.Command {
-	case "recordings upload", "recordings resume":
+	case "recordings upload", "recordings resume", "recordings publish":
 		token, err = profiles.Token(ctx, profile)
 		if err != nil {
 			return finish(err)
@@ -203,7 +213,10 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		client := api.NewClient(token, func(ctx context.Context) (auth.Token, error) { return profiles.Token(ctx, profile) })
 		principal := client.Principal()
 		r.Principal = &principal
-		scopes := []string{"cms:recordings:read", "cms:recordings:write"}
+		scopes := []string{"cms:recordings:read"}
+		if r.Command == "recordings upload" {
+			scopes = append(scopes, "cms:recordings:write")
+		}
 		if publish {
 			scopes = append(scopes, "cms:recordings:publish")
 		}
@@ -211,6 +224,9 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 			return finish(err)
 		}
 		var intent *recordings.Intent
+		if r.Command == "recordings publish" {
+			intent = &recordings.Intent{Command: "publish", Profile: profile, PrincipalType: principal.Type, PrincipalID: principal.ID, ClientID: principal.ClientID, RecordingID: recordingInput, Publish: true}
+		}
 		if r.Command == "recordings upload" {
 			path, err := filepath.Abs(recordingInput)
 			if err != nil {
@@ -229,7 +245,17 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		if !jsonMode {
 			fmt.Fprintln(diagnostics, "Operation:", operationID)
 		}
-		r.Data, err = recordings.UploadPrepared(ctx, client, recordings.NewUploader(), journal)
+		if journal.State().Intent.Command == "publish" {
+			value, publishErr := recordings.Publish(ctx, client, journal)
+			r.Data = struct {
+				RecordingID              string            `json:"recordingId"`
+				Publication              api.PublishResult `json:"publication"`
+				RequestedActionSatisfied bool              `json:"requestedActionSatisfied"`
+			}{journal.State().RecordingID, value, publishErr == nil}
+			err = publishErr
+		} else {
+			r.Data, err = recordings.UploadPrepared(ctx, client, recordings.NewUploader(), journal)
+		}
 		return finish(err)
 	case "recordings get":
 		token, err = profiles.Token(ctx, profile)
