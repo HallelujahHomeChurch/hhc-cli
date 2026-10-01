@@ -37,6 +37,14 @@ including noninteractive service login through `--secret-stdin`, hidden terminal
 input, safe JSON results and exit codes. Profiles bind renewal to the issuer's
 principal, client and credential IDs. JSON human login never opens a browser.
 This is not yet a usable unattended recording uploader.
+The recording transport verifies each local object's hash and size before one
+bounded, credential-isolated presigned PUT. It rejects redirects and unsafe
+targets; PUT acceptance is never reported as package readiness. Signed targets
+are redacted from formatting and JSON output.
+Operation journals now pin intent and observed remote identifiers under native
+locks, use platform-specific flushed replacement, and refuse unknown schemas.
+Resume must still query the server: local journals are not proof of readiness.
+The upload/resume/publish command orchestration is not yet connected.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship a release,
 verified FFmpeg bundle or complete preparation/upload workflow.
