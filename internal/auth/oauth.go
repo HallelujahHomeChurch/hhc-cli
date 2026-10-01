@@ -17,6 +17,7 @@ import (
 )
 
 const humanAuthorizeEndpoint = "https://account.alive.org.tw/api/account/v1/oauth/authorize"
+const humanRevokeEndpoint = "https://account.alive.org.tw/api/account/v1/oauth/revoke"
 
 type HumanLoginOptions struct {
 	NoInput  bool
@@ -37,13 +38,44 @@ func (HumanCredentials) String() string         { return "[redacted human creden
 func (c HumanCredentials) GoString() string     { return c.String() }
 
 type HumanClient struct {
-	http                             *http.Client
-	authorizeEndpoint, tokenEndpoint string
-	openBrowser                      func(context.Context, string) error
+	http                                             *http.Client
+	authorizeEndpoint, tokenEndpoint, revokeEndpoint string
+	openBrowser                                      func(context.Context, string) error
 }
 
 func NewHumanClient() *HumanClient {
-	return &HumanClient{http: newAuthHTTPClient(), authorizeEndpoint: humanAuthorizeEndpoint, tokenEndpoint: serviceTokenEndpoint, openBrowser: openLoginBrowser}
+	return &HumanClient{http: newAuthHTTPClient(), authorizeEndpoint: humanAuthorizeEndpoint, tokenEndpoint: serviceTokenEndpoint, revokeEndpoint: humanRevokeEndpoint, openBrowser: openLoginBrowser}
+}
+
+// Revoke confirms remote revocation only. The profile owner must delete local
+// credentials even on failure, while reporting that remote logout is unconfirmed.
+func (c *HumanClient) Revoke(ctx context.Context, credentials HumanCredentials) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(credentials.refresh) > 4096 || !bearerPattern.MatchString(credentials.refresh) {
+		return ErrInvalidAuthInput
+	}
+	form := url.Values{"client_id": {"hhc-cli"}, "token": {credentials.refresh}, "token_type_hint": {"refresh_token"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.revokeEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return ErrInvalidAuthInput
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := c.http.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return ErrAuthUnavailable
+	}
+	defer response.Body.Close()
+	// The Account revocation contract returns an empty 200 even for an already
+	// revoked token. Never echo or parse an untrusted error response body.
+	if response.StatusCode != http.StatusOK {
+		return ErrAuthUnavailable
+	}
+	return nil
 }
 
 // Login only performs the explicit human PKCE flow. SA failures never invoke

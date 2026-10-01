@@ -25,6 +25,9 @@ when only `offline_access` remains. The profile owner must serialize renewal
 and durably save that credential before any recording action; this storage
 integration is still pending. A lost refresh response requires login, not
 automatic reuse of the consumed credential or a browser fallback.
+Human revocation uses the existing Account native revoke endpoint once, with
+no redirect, browser or credential echo. The future profile logout must clear
+local credentials even when remote revocation cannot be confirmed.
 Native secret storage and login commands are not yet integrated; this is not
 a usable unattended uploader. Simulated browser redirects are not real login
 or Credential Manager/Keychain acceptance.

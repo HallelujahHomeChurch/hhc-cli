@@ -91,6 +91,39 @@ func TestHumanRefreshRejectsInvalidLocalCredentials(t *testing.T) {
 	}
 }
 
+func TestHumanRevokeDoesNotRetryOrOpenBrowser(t *testing.T) {
+	for _, status := range []int{200, 302, 400, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if err := r.ParseForm(); err != nil {
+					t.Error(err)
+					return
+				}
+				if r.Method != "POST" || len(r.PostForm) != 3 || r.PostForm.Get("client_id") != "hhc-cli" || r.PostForm.Get("token") != "private-refresh" || r.PostForm.Get("token_type_hint") != "refresh_token" || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
+					t.Error("invalid native revoke request")
+				}
+				w.Header().Set("Location", "/must-not-follow")
+				w.WriteHeader(status)
+				fmt.Fprint(w, "private-refresh")
+			}))
+			defer server.Close()
+			client := NewHumanClient()
+			client.http.Transport = server.Client().Transport
+			client.revokeEndpoint = server.URL
+			client.openBrowser = func(context.Context, string) error { t.Error("revoke opened browser"); return nil }
+			err := client.Revoke(context.Background(), HumanCredentials{refresh: "private-refresh"})
+			if (err == nil) != (status == 200) || calls.Load() != 1 {
+				t.Fatalf("revoke: %v calls=%d", err, calls.Load())
+			}
+			if err != nil && strings.Contains(err.Error(), "private-refresh") {
+				t.Error("revoke echoed server body")
+			}
+		})
+	}
+}
+
 func TestLoopbackPKCEStateAndSingleExchange(t *testing.T) {
 	var challenge, redirect, callbackBody string
 	var exchanges atomic.Int32
