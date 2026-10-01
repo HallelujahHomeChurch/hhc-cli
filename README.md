@@ -32,16 +32,37 @@ Credential Manager or macOS Keychain, with no plaintext fallback or GUI prompt.
 macOS requires a cgo-enabled native build linked to Apple's frameworks. Native
 store tests use disposable fixture entries; real agent logon contexts and
 credential access across signed application updates still need acceptance.
-CLI commands are not yet integrated; this is not a usable unattended uploader.
+The development executable now supports `version` and `auth login/status/logout`,
+including noninteractive service login through `--secret-stdin`, hidden terminal
+input, safe JSON results and exit codes. Profiles bind renewal to the issuer's
+principal, client and credential IDs. JSON human login never opens a browser.
+This is not yet a usable unattended recording uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
-it does not establish encoded-media readiness. It does not yet ship an
-executable, verified FFmpeg bundle or complete preparation/upload workflow.
+it does not establish encoded-media readiness. It does not yet ship a release,
+verified FFmpeg bundle or complete preparation/upload workflow.
 
 The approved target is Windows amd64 and macOS arm64, bundled FFmpeg, local HLS
 preparation, human/service login, resumable direct upload, explicit publication
 and signed manual updates. Original recordings are never deleted by the CLI.
 
 ## Verification
+
+Development commands (the new Account producer contract must be released before
+real authentication can work):
+
+```sh
+go run ./cmd/hhc version --json
+go run ./cmd/hhc auth login --profile personal
+go run ./cmd/hhc auth login --service-principal --client-id CLIENT_ID --profile uploader
+go run ./cmd/hhc auth status --profile uploader --json
+go run ./cmd/hhc auth logout --profile uploader --json
+```
+
+For explicit provisioning, supply one credential line through a private stdin
+pipe and add `--secret-stdin --no-input --json`; never place secrets in arguments,
+shell history or agent prompts. Use `--scope` with space-separated recording
+scopes for a principal with fewer than read/write/publish grants. Service logout
+clears only this local profile, not the organization's credential.
 
 ```sh
 go test -race ./... -count=1

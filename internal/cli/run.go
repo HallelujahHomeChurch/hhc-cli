@@ -1,0 +1,255 @@
+package cli
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/auth"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
+	"golang.org/x/term"
+)
+
+type result struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	OK            bool            `json:"ok"`
+	Command       string          `json:"command"`
+	Profile       *string         `json:"profile"`
+	Principal     *auth.Principal `json:"principal"`
+	Data          any             `json:"data"`
+	Error         *commandError   `json:"error"`
+}
+
+type commandError struct {
+	Code      string  `json:"code"`
+	Message   string  `json:"message"`
+	Retryable bool    `json:"retryable"`
+	RequestID *string `json:"requestId"`
+}
+
+// Run never prints parser errors, remote response bodies or credential values.
+// All output is selected here; auth tokens never enter the output envelope.
+func Run(ctx context.Context, args []string, input *os.File, output, diagnostics io.Writer, version string) int {
+	jsonMode := slices.Contains(args, "--json") || slices.Contains(args, "--json=true")
+	r := result{SchemaVersion: 1}
+	finish := func(err error) int {
+		exit := 0
+		if err != nil {
+			code, message, status, retryable := classify(err)
+			r.Error = &commandError{Code: code, Message: message, Retryable: retryable}
+			exit = status
+		}
+		r.OK = err == nil
+		if jsonMode {
+			if json.NewEncoder(output).Encode(r) != nil {
+				return 1
+			}
+		} else if err != nil {
+			fmt.Fprintln(diagnostics, r.Error.Message)
+		} else if r.Command == "version" {
+			fmt.Fprintln(output, "hhc", version, runtime.GOOS+"/"+runtime.GOARCH)
+		} else {
+			encoder := json.NewEncoder(output)
+			encoder.SetIndent("", "  ")
+			if encoder.Encode(r) != nil {
+				return 1
+			}
+		}
+		return exit
+	}
+	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "help")) {
+		fmt.Fprintln(output, "Usage: hhc version [--json]\n       hhc auth login|status|logout [--profile NAME] [--json] [--no-input]\n\nLogin: --service-principal --client-id ID [--secret-stdin]\n       --scope 'cms:recordings:read cms:recordings:write cms:recordings:publish'\n\nHuman login opens the system browser. Service secrets are hidden; never use a secret argument.")
+		return 0
+	}
+	var flags []string
+	if args[0] == "version" {
+		r.Command, flags = "version", args[1:]
+	} else if len(args) >= 2 && args[0] == "auth" && slices.Contains([]string{"login", "status", "logout"}, args[1]) {
+		r.Command, flags = "auth "+args[1], args[2:]
+	} else {
+		return finish(auth.ErrInvalidAuthInput)
+	}
+	fs := flag.NewFlagSet("hhc", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.BoolVar(&jsonMode, "json", false, "")
+	noInput := fs.Bool("no-input", false, "")
+	profile := "default"
+	var service, secretStdin bool
+	var clientID, scope string
+	if r.Command != "version" {
+		fs.StringVar(&profile, "profile", "default", "")
+	}
+	if r.Command == "auth login" {
+		fs.BoolVar(&service, "service-principal", false, "")
+		fs.BoolVar(&secretStdin, "secret-stdin", false, "")
+		fs.StringVar(&clientID, "client-id", "", "")
+		fs.StringVar(&scope, "scope", "cms:recordings:read cms:recordings:write cms:recordings:publish", "")
+	}
+	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 {
+		// Parse can stop before --json. Preserve the requested machine envelope.
+		jsonMode = jsonMode || slices.Contains(args, "--json") || slices.Contains(args, "--json=true")
+		return finish(auth.ErrInvalidAuthInput)
+	}
+	if r.Command == "version" {
+		r.Data = struct {
+			Version  string `json:"version"`
+			Platform string `json:"platform"`
+		}{version, runtime.GOOS + "/" + runtime.GOARCH}
+		return finish(nil)
+	}
+	if err := ctx.Err(); err != nil {
+		return finish(err)
+	}
+	if !auth.ValidProfile(profile) {
+		return finish(auth.ErrInvalidAuthInput)
+	}
+	r.Profile = &profile
+	if r.Command == "auth login" && !service {
+		if secretStdin || clientID != "" {
+			return finish(auth.ErrInvalidAuthInput)
+		}
+		if *noInput || jsonMode || input == nil || !term.IsTerminal(int(input.Fd())) {
+			return finish(auth.ErrAuthenticationRequired)
+		}
+	}
+	if r.Command == "auth login" && service && (clientID == "" || (!secretStdin && (*noInput || jsonMode || input == nil || !term.IsTerminal(int(input.Fd()))))) {
+		return finish(auth.ErrInvalidAuthInput)
+	}
+	directory, err := os.UserConfigDir()
+	if runtime.GOOS == "windows" {
+		directory, err = os.UserCacheDir()
+	}
+	if err != nil || !filepath.IsAbs(directory) {
+		return finish(auth.ErrCredentialStoreUnavailable)
+	}
+	profiles := auth.NewProfiles(filepath.Join(directory, "HHC", "cli", "profiles"))
+	var token auth.Token
+	switch r.Command {
+	case "auth status":
+		token, err = profiles.Token(ctx, profile)
+	case "auth logout":
+		r.Data, err = profiles.Logout(ctx, profile)
+		return finish(err)
+	case "auth login":
+		if service {
+			var secret []byte
+			secret, err = readSecret(ctx, input, diagnostics, secretStdin)
+			if err != nil {
+				return finish(err)
+			}
+			defer clear(secret)
+			token, err = profiles.LoginService(ctx, profile, clientID, string(secret), strings.Fields(scope))
+		} else {
+			token, err = profiles.LoginHuman(ctx, profile, auth.HumanLoginOptions{Scopes: strings.Fields(scope)})
+		}
+	}
+	if err == nil {
+		principal := token.Principal()
+		r.Principal = &principal
+		r.Data = struct {
+			Scopes          []string  `json:"scopes"`
+			AccessExpiresAt time.Time `json:"accessExpiresAt"`
+		}{strings.Fields(token.Scope()), token.ExpiresAt()}
+	}
+	return finish(err)
+}
+
+func readSecretLine(reader io.Reader) ([]byte, error) {
+	line, err := bufio.NewReaderSize(reader, 4098).ReadSlice('\n')
+	if err != nil && err != io.EOF {
+		clear(line)
+		return nil, auth.ErrInvalidAuthInput
+	}
+	line = bytes.TrimSuffix(line, []byte{'\n'})
+	line = bytes.TrimSuffix(line, []byte{'\r'})
+	if len(line) == 0 || len(line) > 4096 || !utf8.Valid(line) || bytes.ContainsAny(line, "\r\n\x00") {
+		clear(line)
+		return nil, auth.ErrInvalidAuthInput
+	}
+	return line, nil
+}
+
+func readSecret(ctx context.Context, input *os.File, diagnostics io.Writer, fromStdin bool) ([]byte, error) {
+	if input == nil {
+		return nil, auth.ErrInvalidAuthInput
+	}
+	fd := int(input.Fd())
+	if fromStdin && term.IsTerminal(fd) {
+		return nil, auth.ErrInvalidAuthInput
+	}
+	if !fromStdin {
+		state, err := term.GetState(fd)
+		if err != nil {
+			return nil, auth.ErrInvalidAuthInput
+		}
+		defer term.Restore(fd, state)
+		fmt.Fprint(diagnostics, "Service credential (hidden): ")
+		defer fmt.Fprintln(diagnostics)
+	}
+	type secretResult struct {
+		value []byte
+		err   error
+	}
+	completed := make(chan secretResult)
+	go func() {
+		var value []byte
+		var err error
+		if fromStdin {
+			value, err = readSecretLine(input)
+		} else {
+			value, err = term.ReadPassword(fd)
+		}
+		select {
+		case completed <- secretResult{value, err}:
+		case <-ctx.Done():
+			clear(value)
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case result := <-completed:
+		if result.err != nil {
+			clear(result.value)
+			return nil, auth.ErrInvalidAuthInput
+		}
+		return result.value, nil
+	}
+}
+
+func classify(err error) (string, string, int, bool) {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled", "操作已取消。", 130, false
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", "操作逾時，尚未確認完成。", 6, true
+	case errors.Is(err, auth.ErrInvalidAuthInput):
+		return "invalid_input", "參數無效；請使用 hhc --help。", 2, false
+	case errors.Is(err, auth.ErrAuthenticationRequired):
+		return "authentication_required", "需要執行 hhc auth login 登入。", 3, false
+	case errors.Is(err, auth.ErrCredentialStoreUnavailable):
+		return "credential_store_unavailable", "無法存取作業系統憑證庫。", 3, false
+	case errors.Is(err, auth.ErrPermissionDenied):
+		return "permission_denied", "此身分沒有所需權限。", 4, false
+	case errors.Is(err, operation.ErrOperationBusy):
+		return "operation_busy", "相同 profile 正在使用中。", 5, true
+	case errors.Is(err, auth.ErrAuthUnavailable):
+		return "auth_unavailable", "驗證服务暫時無法確認結果。", 6, true
+	case errors.Is(err, auth.ErrInvalidAuthResponse):
+		return "invalid_auth_response", "驗證回應不符合可信契約。", 6, false
+	default:
+		return "unknown_error", "操作失敗，尚未確認完成。", 1, false
+	}
+}

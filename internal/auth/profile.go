@@ -50,7 +50,7 @@ func (p *Profiles) lock(ctx context.Context, profile string) (*os.File, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !validProfile(profile) || !filepath.IsAbs(p.directory) {
+	if !ValidProfile(profile) || !filepath.IsAbs(p.directory) {
 		return nil, ErrInvalidAuthInput
 	}
 	if err := os.MkdirAll(p.directory, 0700); err != nil {

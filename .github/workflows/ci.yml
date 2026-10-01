@@ -27,6 +27,8 @@ jobs:
           GOOS=darwin GOARCH=arm64 go test -c -o "$RUNNER_TEMP/media-darwin.test" ./internal/media
           GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/auth-windows.test.exe" ./internal/auth
           GOOS=darwin GOARCH=arm64 go test -c -o "$RUNNER_TEMP/auth-darwin.test" ./internal/auth
+          GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/hhc.exe" ./cmd/hhc
+          GOOS=darwin GOARCH=arm64 go build -o "$RUNNER_TEMP/hhc" ./cmd/hhc
   native-source:
     strategy:
       fail-fast: false
@@ -46,6 +48,10 @@ jobs:
         env:
           HHC_TEST_NATIVE_CREDENTIALS: "1"
         run: go test -race ./internal/auth -run TestNativeCredential -count=1
+      - name: Test CLI login status logout using disposable native credentials
+        env:
+          HHC_TEST_NATIVE_CREDENTIALS: "1"
+        run: go test -race ./internal/cli -count=1
   verify:
     if: ${{ always() }}
     needs: [contracts, native-source]

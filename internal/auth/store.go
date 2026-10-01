@@ -11,7 +11,7 @@ var (
 // or interactive prompts. Profile serialization is the profile owner's job.
 type NativeStore struct{}
 
-func validProfile(name string) bool {
+func ValidProfile(name string) bool {
 	if len(name) < 1 || len(name) > 64 {
 		return false
 	}
@@ -28,7 +28,7 @@ func validProfile(name string) bool {
 }
 
 func (NativeStore) Load(profile string) ([]byte, error) {
-	if !validProfile(profile) {
+	if !ValidProfile(profile) {
 		return nil, ErrInvalidAuthInput
 	}
 	return loadNativeSecret(profile)
@@ -37,14 +37,14 @@ func (NativeStore) Load(profile string) ([]byte, error) {
 func (NativeStore) Save(profile string, value []byte) error {
 	// Windows generic credentials have a 2,560-byte limit. Use one atomic native
 	// item for the whole profile credential; never split a rotated secret.
-	if !validProfile(profile) || len(value) == 0 || len(value) > 2560 {
+	if !ValidProfile(profile) || len(value) == 0 || len(value) > 2560 {
 		return ErrInvalidAuthInput
 	}
 	return saveNativeSecret(profile, value)
 }
 
 func (NativeStore) Delete(profile string) error {
-	if !validProfile(profile) {
+	if !ValidProfile(profile) {
 		return ErrInvalidAuthInput
 	}
 	err := deleteNativeSecret(profile)
