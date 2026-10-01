@@ -17,7 +17,25 @@ import (
 	"time"
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/auth"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/bundle"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 )
+
+func TestPreparationErrorsHaveSafeActionableCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{
+		{bundle.ErrUnavailable, "ffmpeg_bundle_unavailable"},
+		{media.ErrLocalCleanup, "local_cleanup_failed"},
+		{media.ErrInsufficientDisk, "insufficient_disk_space"},
+	} {
+		code, _, exit, _ := classify(tc.err)
+		if code != tc.code || exit == 0 {
+			t.Fatalf("error mapping: %s %d", code, exit)
+		}
+	}
+}
 
 func TestJSONLoginNeverPromptsAndInvalidArgsAreRedacted(t *testing.T) {
 	for _, tc := range []struct {
@@ -154,6 +172,11 @@ func TestNativeServiceCommandsUseCredentialStoreAndRedactSecret(t *testing.T) {
 			code := Run(context.Background(), []string{"recordings", "upload", t.TempDir(), "--title", "Fixture", "--operation-id", "00000000-0000-4000-8000-000000000081", "--profile", profile, "--json", "--no-input"}, nil, &out, &diagnostics, "test")
 			if code != 4 || !strings.Contains(out.String(), `"code":"permission_denied"`) {
 				t.Fatalf("upload did not preflight scope: %d %s", code, out.String())
+			}
+			out.Reset()
+			code = Run(context.Background(), []string{"recordings", "upload", filepath.Join(t.TempDir(), "source.mp4"), "--prepare", "--title", "Fixture", "--operation-id", "00000000-0000-4000-8000-000000000083", "--profile", profile, "--json", "--no-input"}, nil, &out, &diagnostics, "test")
+			if code != 4 {
+				t.Fatalf("prepare upload did not preflight scope: %d %s", code, out.String())
 			}
 			out.Reset()
 			code = Run(context.Background(), []string{"recordings", "publish", "00000000-0000-4000-8000-000000000041", "--operation-id", "00000000-0000-4000-8000-000000000082", "--profile", profile, "--json", "--no-input"}, nil, &out, &diagnostics, "test")

@@ -54,6 +54,9 @@ type JournalState struct {
 	PackageID              string                  `json:"packageId"`
 	SessionID              string                  `json:"sessionId"`
 	PublishExpectedVersion int64                   `json:"publishExpectedVersion"`
+	GeneratedOwned         bool                    `json:"generatedOwned"`
+	PackageBytes           int64                   `json:"packageBytes"`
+	LastResult             *UploadResult           `json:"lastResult,omitempty"`
 }
 
 // Journal is held by one command. Its OS lock excludes other processes; the
@@ -160,6 +163,9 @@ func (j *Journal) Save(next JournalState) error {
 		j.state.PackageDigest != "" && next.PackageDigest != j.state.PackageDigest {
 		return ErrOperationConflict
 	}
+	if j.state.GeneratedOwned && !next.GeneratedOwned || j.state.PackageBytes != 0 && next.PackageBytes != j.state.PackageBytes {
+		return ErrOperationConflict
+	}
 	next.UpdatedAt = time.Now().UTC()
 	data, err := json.Marshal(next)
 	if err != nil || len(data) > 65536 {
@@ -227,7 +233,10 @@ func validIntent(v Intent) bool {
 }
 
 func validState(v JournalState) bool {
-	if v.SchemaVersion != 1 || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 {
+	if v.SchemaVersion != 1 || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 || v.PackageBytes < 0 || v.PackageBytes > media.RecordingPackageMaxBytes || v.GeneratedOwned && (v.Intent.Command != "upload" || !v.Intent.Prepare) {
+		return false
+	}
+	if v.LastResult != nil && (v.LastResult.OperationID != v.OperationID || v.LastResult.RecordingID != v.RecordingID || v.LastResult.PackageID != v.PackageID || v.LastResult.PackageDigest != v.PackageDigest) {
 		return false
 	}
 	if v.RecordingID != "" && !validUUID(v.RecordingID) {

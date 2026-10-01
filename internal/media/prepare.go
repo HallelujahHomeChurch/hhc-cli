@@ -29,7 +29,7 @@ type PreparedPackage struct {
 // The caller verifies bundled tools and places output in its journal-owned
 // workspace. Nothing here selects PATH binaries, deletes source, or replaces
 // existing output. Publication/upload and generated-package cleanup are separate.
-func PrepareCPU(ctx context.Context, source, output, ffmpeg, ffprobe string, options EncodeOptions) (value PreparedPackage, err error) {
+func PrepareCPU(ctx context.Context, source, output, ffmpeg, ffprobe string, options EncodeOptions, checkpoint func(SourceFingerprint) error) (value PreparedPackage, err error) {
 	if err := ctx.Err(); err != nil {
 		return value, err
 	}
@@ -74,6 +74,13 @@ func PrepareCPU(ctx context.Context, source, output, ffmpeg, ffprobe string, opt
 	value.SourceFingerprint, err = FingerprintSource(ctx, stable)
 	if err != nil {
 		return value, err
+	}
+	// Persist identity before encoding. A resumed operation must not silently
+	// upload a different recording after its original source was changed.
+	if checkpoint != nil {
+		if err := checkpoint(value.SourceFingerprint); err != nil {
+			return value, err
+		}
 	}
 	metadata, err := ProbeSource(ctx, ffprobe, stable.Name())
 	if err != nil {

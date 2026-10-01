@@ -20,6 +20,7 @@ import (
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/auth"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/bundle"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/recordings"
@@ -80,12 +81,13 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fmt.Fprintln(output, "\nRecording metadata: hhc recordings get ID [--profile NAME] [--json] [--no-input]")
 		fmt.Fprintln(output, "Upload package: hhc recordings upload DIRECTORY --title TITLE --profile NAME --operation-id UUID [--publish] [--timeout 4h] [--json] [--no-input]\nResume: hhc recordings resume UUID --profile NAME [--timeout 4h] [--json] [--no-input]")
 		fmt.Fprintln(output, "Publish: hhc recordings publish ID --profile NAME --operation-id UUID [--timeout 4h] [--json] [--no-input]")
+		fmt.Fprintln(output, "Prepare and upload: hhc recordings upload FILE --prepare --title TITLE --profile NAME --operation-id UUID [--publish] [--json] [--no-input]")
 		return 0
 	}
 	var flags []string
 	var recordingID string
 	var recordingInput, operationID, title string
-	var publish bool
+	var publish, prepare bool
 	timeout := 4 * time.Hour
 	if args[0] == "version" {
 		r.Command, flags = "version", args[1:]
@@ -130,6 +132,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fs.StringVar(&title, "title", "", "")
 		fs.StringVar(&operationID, "operation-id", "", "")
 		fs.BoolVar(&publish, "publish", false, "")
+		fs.BoolVar(&prepare, "prepare", false, "")
 	}
 	if r.Command == "recordings publish" {
 		fs.StringVar(&operationID, "operation-id", "", "")
@@ -233,6 +236,10 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 				return finish(auth.ErrInvalidAuthInput)
 			}
 			intent = &recordings.Intent{Command: "upload", Profile: profile, PrincipalType: principal.Type, PrincipalID: principal.ID, ClientID: principal.ClientID, Input: path, Title: strings.TrimSpace(title), Publish: publish}
+			if prepare {
+				options := media.DefaultEncodeOptions()
+				intent.Prepare, intent.VideoBitrate720, intent.VideoBitrate1080 = true, options.VideoBitrate720, options.VideoBitrate1080
+			}
 		}
 		journal, err := recordings.OpenJournal(filepath.Join(directory, "HHC", "cli", "operations"), operationID, intent)
 		if err != nil {
@@ -374,6 +381,20 @@ func classify(err error) (string, string, int, bool) {
 		}
 	}
 	switch {
+	case errors.Is(err, media.ErrLocalCleanup):
+		return "local_cleanup_failed", "暫存清理未完成，請以原 operation ID 執行 resume。", 6, true
+	case errors.Is(err, bundle.ErrUnavailable):
+		return "ffmpeg_bundle_unavailable", "內附轉檔工具缺少或驗證失敗，請重新安裝可信任的 HHC 發行包。", 5, false
+	case errors.Is(err, media.ErrInsufficientDisk):
+		return "insufficient_disk_space", "磁碟可用空間不足；清出空間後以原 operation ID 執行 resume。", 5, true
+	case errors.Is(err, media.ErrRecordingSourceTooLarge):
+		return "source_too_large", "來源超過 50 GB 上限。", 2, false
+	case errors.Is(err, media.ErrRecordingPackageTooLarge), errors.Is(err, media.ErrRecordingPackageEstimateTooLarge):
+		return "package_too_large", "HLS 套件超過 10 GB 上限或估算預算，未完成上傳。", 2, false
+	case errors.Is(err, media.ErrUnsupportedSource):
+		return "unsupported_source", "來源格式、影音軌或畫面規格不支援。", 2, false
+	case errors.Is(err, operation.ErrSourceChanged):
+		return "source_changed", "來源檔案已變動，未繼續轉檔或上傳。", 5, false
 	case errors.Is(err, api.ErrInvalidResponse):
 		return "invalid_api_response", "錄影回應不符合可信契約。", 6, false
 	case errors.Is(err, context.Canceled):

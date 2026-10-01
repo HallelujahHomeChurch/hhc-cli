@@ -35,7 +35,22 @@ func TestPrepareCPUPreservesSourceAndAtomicallyCreatesPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(original)
-	value, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, DefaultEncodeOptions())
+	checkpointErr := errors.New("checkpoint refused")
+	checkpointCalled := false
+	_, err = PrepareCPU(ctx, source, output, ffmpeg, ffprobe, DefaultEncodeOptions(), func(f SourceFingerprint) error {
+		checkpointCalled = true
+		if f.SHA256 != fmt.Sprintf("%x", hash) {
+			t.Fatal("checkpoint used another source")
+		}
+		return checkpointErr
+	})
+	if !checkpointCalled || !errors.Is(err, checkpointErr) {
+		t.Fatalf("checkpoint not enforced: %v", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatal("output created before source checkpoint")
+	}
+	value, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, DefaultEncodeOptions(), nil)
 	if err != nil || len(value.Inventory.Renditions) != 2 || value.SourceFingerprint.SHA256 != fmt.Sprintf("%x", hash) || value.ActualEncoder != "libx264" {
 		t.Fatalf("prepare: %+v %v", value, err)
 	}
@@ -47,12 +62,12 @@ func TestPrepareCPUPreservesSourceAndAtomicallyCreatesPackage(t *testing.T) {
 	if err != nil || sha256.Sum256(after) != hash {
 		t.Fatal("changed original")
 	}
-	if _, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, DefaultEncodeOptions()); err == nil {
+	if _, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, DefaultEncodeOptions(), nil); err == nil {
 		t.Fatal("overwrote user output")
 	}
 	cancelled, stop := context.WithCancel(ctx)
 	stop()
-	if _, err := PrepareCPU(cancelled, source, filepath.Join(parent, "cancelled"), ffmpeg, ffprobe, DefaultEncodeOptions()); !errors.Is(err, context.Canceled) {
+	if _, err := PrepareCPU(cancelled, source, filepath.Join(parent, "cancelled"), ffmpeg, ffprobe, DefaultEncodeOptions(), nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled prepare: %v", err)
 	}
 	entries, err := os.ReadDir(parent)

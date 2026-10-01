@@ -67,8 +67,17 @@ space, monitors generated-byte/free-space budgets, measures actual fragments and
 atomically finalizes a new package without overwriting existing output. Local
 tests verify source preservation and snapshot/scratch cleanup. Native CI now also
 runs actual CPU media fixtures on Windows and macOS; these are not release bundles.
-CLI preparation/bundle integration and managed upload-temp cleanup are still being implemented; these
-development commands are not a released end-to-end uploader.
+`recordings upload FILE --prepare` now connects the fixed CPU pipeline to the
+same upload operation, verifies the embedded tool manifest before execution,
+and pins the stable source fingerprint before encoding. Its private generated
+tree is removed only after remote ready, including when publication then fails.
+Ready resume queries the server before touching source, local media or FFmpeg;
+it retains a small result receipt and does not re-encode or re-upload. A failed
+cleanup returns nonzero; `cleanupBytesRemaining` is null when unknown and zero
+only after successful managed cleanup. Original sources and user packages remain.
+The distributed FFmpeg builds, automatic hardware qualification, standalone
+prepare, updater and final release integration are still being implemented;
+these development commands are not a released end-to-end uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship a release,
 verified FFmpeg bundle or complete preparation/upload workflow.
