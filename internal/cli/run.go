@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/auth"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 	"golang.org/x/term"
@@ -71,13 +72,20 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	}
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "help")) {
 		fmt.Fprintln(output, "Usage: hhc version [--json]\n       hhc auth login|status|logout [--profile NAME] [--json] [--no-input]\n\nLogin: --service-principal --client-id ID [--secret-stdin]\n       --scope 'cms:recordings:read cms:recordings:write cms:recordings:publish'\n\nHuman login opens the system browser. Service secrets are hidden; never use a secret argument.")
+		fmt.Fprintln(output, "\nRecording metadata: hhc recordings get ID [--profile NAME] [--json] [--no-input]")
 		return 0
 	}
 	var flags []string
+	var recordingID string
 	if args[0] == "version" {
 		r.Command, flags = "version", args[1:]
 	} else if len(args) >= 2 && args[0] == "auth" && slices.Contains([]string{"login", "status", "logout"}, args[1]) {
 		r.Command, flags = "auth "+args[1], args[2:]
+	} else if len(args) >= 3 && args[0] == "recordings" && args[1] == "get" {
+		r.Command, recordingID, flags = "recordings get", args[2], args[3:]
+		if !api.ValidRecordingID(recordingID) {
+			return finish(auth.ErrInvalidAuthInput)
+		}
 	} else {
 		return finish(auth.ErrInvalidAuthInput)
 	}
@@ -137,6 +145,20 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	profiles := auth.NewProfiles(filepath.Join(directory, "HHC", "cli", "profiles"))
 	var token auth.Token
 	switch r.Command {
+	case "recordings get":
+		token, err = profiles.Token(ctx, profile)
+		if err != nil {
+			return finish(err)
+		}
+		client := api.NewClient(token, func(ctx context.Context) (auth.Token, error) { return profiles.Token(ctx, profile) })
+		recording, getErr := client.GetRecording(ctx, recordingID)
+		err = getErr
+		if err == nil {
+			r.Data = recording
+		}
+		principal := client.Principal()
+		r.Principal = &principal
+		return finish(err)
 	case "auth status":
 		token, err = profiles.Token(ctx, profile)
 	case "auth logout":
@@ -230,7 +252,18 @@ func readSecret(ctx context.Context, input *os.File, diagnostics io.Writer, from
 }
 
 func classify(err error) (string, string, int, bool) {
+	var remote *api.Error
+	if errors.As(err, &remote) {
+		switch remote.Code {
+		case "api_unavailable", "rate_limited":
+			return remote.Code, "錄影服務暫時無法確認結果，請稍後重試。", 6, true
+		case "not_found", "operation_conflict", "state_changed":
+			return remote.Code, "錄影不存在或狀態已變更，請重新查詢。", 5, false
+		}
+	}
 	switch {
+	case errors.Is(err, api.ErrInvalidResponse):
+		return "invalid_api_response", "錄影回應不符合可信契約。", 6, false
 	case errors.Is(err, context.Canceled):
 		return "cancelled", "操作已取消。", 130, false
 	case errors.Is(err, context.DeadlineExceeded):

@@ -37,6 +37,9 @@ including noninteractive service login through `--secret-stdin`, hidden terminal
 input, safe JSON results and exit codes. Profiles bind renewal to the issuer's
 principal, client and credential IDs. JSON human login never opens a browser.
 This is not yet a usable unattended recording uploader.
+`recordings get ID` queries the authenticated CMS recording projection, with
+one bounded same-principal renewal on 401 and no redirect or response-body echo.
+It reports metadata only; a successful query does not establish HLS readiness.
 The recording transport verifies each local object's hash and size before one
 bounded, credential-isolated presigned PUT. It rejects redirects and unsafe
 targets; PUT acceptance is never reported as package readiness. Signed targets

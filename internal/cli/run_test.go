@@ -58,7 +58,9 @@ type tokenFixtureTransport struct {
 }
 
 func (f tokenFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Scheme != "https" || r.URL.Host != "account.alive.org.tw" || r.URL.Path != "/api/account/v1/oauth/token" {
+	account := r.URL.Host == "account.alive.org.tw" && r.URL.Path == "/api/account/v1/oauth/token"
+	recording := r.URL.Host == "admin.alive.org.tw" && r.URL.Path == "/api/admin/recordings/00000000-0000-4000-8000-000000000041"
+	if r.URL.Scheme != "https" || !account && !recording {
 		f.t.Error("unexpected authentication destination")
 	}
 	clone := r.Clone(r.Context())
@@ -106,6 +108,14 @@ func TestNativeServiceCommandsUseCredentialStoreAndRedactSecret(t *testing.T) {
 		}
 	})
 	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/admin/recordings/00000000-0000-4000-8000-000000000041" {
+			if r.Header.Get("Authorization") != "Bearer dummy-access-never-print" || r.Method != "GET" {
+				t.Error("incorrect protected read")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"data":{"id":"00000000-0000-4000-8000-000000000041","title":"主日聚會","status":"draft","version":1,"internalSecret":"never-print"},"error":null}`)
+			return
+		}
 		client, secret, ok := r.BasicAuth()
 		if !ok || client != "fixture" || secret != "dummy-secret-never-print" {
 			t.Error("wrong credential request")
@@ -128,7 +138,7 @@ func TestNativeServiceCommandsUseCredentialStoreAndRedactSecret(t *testing.T) {
 	writer.Close()
 	for _, args := range [][]string{
 		{"auth", "login", "--service-principal", "--client-id", "fixture", "--secret-stdin", "--scope", "cms:recordings:read"},
-		{"auth", "status"}, {"auth", "logout"},
+		{"auth", "status"}, {"recordings", "get", "00000000-0000-4000-8000-000000000041"}, {"auth", "logout"},
 	} {
 		var out, diagnostics bytes.Buffer
 		args = append(args, "--profile", profile, "--json")
