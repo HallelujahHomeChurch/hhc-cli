@@ -13,6 +13,39 @@ import (
 	"time"
 )
 
+func TestInstallationReadersExcludeUpdate(t *testing.T) {
+	dir := t.TempDir()
+	first, err := LockSharedWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := LockSharedWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if lock, err := LockWorkspace(dir); !errors.Is(err, ErrOperationBusy) {
+		if lock != nil {
+			lock.Close()
+		}
+		t.Fatalf("update ignored readers: %v", err)
+	}
+	first.Close()
+	second.Close()
+	update, err := LockWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer update.Close()
+	if lock, err := LockSharedWorkspace(dir); !errors.Is(err, ErrOperationBusy) {
+		if lock != nil {
+			lock.Close()
+		}
+		t.Fatalf("reader ignored update: %v", err)
+	}
+}
+
 func TestWorkspaceLockIsExclusiveAndReusableAfterClose(t *testing.T) {
 	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		t.Skip("supported native OS required")

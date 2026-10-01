@@ -24,6 +24,7 @@ import (
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/recordings"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/update"
 	"golang.org/x/term"
 )
 
@@ -83,6 +84,8 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fmt.Fprintln(output, "Publish: hhc recordings publish ID --profile NAME --operation-id UUID [--timeout 4h] [--json] [--no-input]")
 		fmt.Fprintln(output, "Prepare and upload: hhc recordings upload FILE --prepare --title TITLE --profile NAME --operation-id UUID [--publish] [--json] [--no-input]")
 		fmt.Fprintln(output, "Keep prepared package: hhc recordings prepare FILE --output DIRECTORY --operation-id UUID [--timeout 4h] [--json] [--no-input]")
+		fmt.Fprintln(output, "Update: hhc update [--check] [--json] [--no-input] (installation requires the managed launcher)")
+		fmt.Fprintln(output, "First installation: hhc install --directory ABSOLUTE_NEW_DIRECTORY [--json] [--no-input]")
 		return 0
 	}
 	var flags []string
@@ -93,6 +96,10 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	timeout := 4 * time.Hour
 	if args[0] == "version" {
 		r.Command, flags = "version", args[1:]
+	} else if args[0] == "update" {
+		r.Command, flags = "update", args[1:]
+	} else if args[0] == "install" {
+		r.Command, flags = "install", args[1:]
 	} else if len(args) >= 2 && args[0] == "auth" && slices.Contains([]string{"login", "status", "logout"}, args[1]) {
 		r.Command, flags = "auth "+args[1], args[2:]
 	} else if len(args) >= 3 && args[0] == "recordings" && args[1] == "get" {
@@ -117,11 +124,23 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	fs := flag.NewFlagSet("hhc", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&jsonMode, "json", false, "")
+	var selfCheck bool
+	var checkUpdate bool
+	var installDirectory string
+	if r.Command == "install" {
+		fs.StringVar(&installDirectory, "directory", "", "")
+	}
+	if r.Command == "update" {
+		fs.BoolVar(&checkUpdate, "check", false, "")
+	}
+	if r.Command == "version" {
+		fs.BoolVar(&selfCheck, "self-check", false, "")
+	}
 	noInput := fs.Bool("no-input", false, "")
 	profile := "default"
 	var service, secretStdin bool
 	var clientID, scope string
-	if r.Command != "version" && r.Command != "recordings prepare" {
+	if r.Command != "version" && r.Command != "recordings prepare" && r.Command != "update" && r.Command != "install" {
 		fs.StringVar(&profile, "profile", "default", "")
 	}
 	if r.Command == "auth login" {
@@ -151,11 +170,43 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		jsonMode = jsonMode || slices.Contains(args, "--json") || slices.Contains(args, "--json=true")
 		return finish(auth.ErrInvalidAuthInput)
 	}
+	if r.Command == "install" {
+		var err error
+		r.Data, err = update.Bootstrap(ctx, installDirectory, version)
+		return finish(err)
+	}
+	if r.Command == "update" {
+		var err error
+		r.Data, err = update.Execute(ctx, version, checkUpdate)
+		return finish(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return finish(err)
+	}
+	installationLock, err := update.LockCommand(executable)
+	if err != nil {
+		return finish(err)
+	}
+	if installationLock != nil {
+		defer installationLock.Close()
+	}
 	if r.Command == "version" {
+		bundleVersion := ""
+		if selfCheck {
+			tools, err := bundle.Verify()
+			if err != nil {
+				return finish(err)
+			}
+			bundleVersion = tools.Version
+		}
 		r.Data = struct {
-			Version  string `json:"version"`
-			Platform string `json:"platform"`
-		}{version, runtime.GOOS + "/" + runtime.GOARCH}
+			Version       string `json:"version"`
+			Platform      string `json:"platform"`
+			JournalSchema int    `json:"journalSchema"`
+			SkillVersion  string `json:"skillVersion"`
+			BundleVersion string `json:"bundleVersion,omitempty"`
+		}{version, runtime.GOOS + "/" + runtime.GOARCH, 1, version, bundleVersion}
 		return finish(nil)
 	}
 	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" || r.Command == "recordings prepare" {
@@ -435,6 +486,14 @@ func classify(err error) (string, string, int, bool) {
 		}
 	}
 	switch {
+	case errors.Is(err, update.ErrManagedInstallRequired):
+		return "managed_install_required", "此為 portable 安裝，未更新；請依發行包說明建立使用者層級受管理安裝。", 5, false
+	case errors.Is(err, update.ErrTrustUnavailable):
+		return "release_trust_unavailable", "此版本未內附發行驗證金鑰；不會下載或執行未驗證的更新。", 5, false
+	case errors.Is(err, update.ErrInvalidRelease):
+		return "invalid_release", "更新套件或相容性驗證失敗，未確認安裝成功。", 5, false
+	case errors.Is(err, update.ErrReleaseUnavailable):
+		return "release_unavailable", "暫時無法取得可信發行資訊。", 6, true
 	case errors.Is(err, media.ErrLocalCleanup):
 		return "local_cleanup_failed", "暫存清理未完成，請以原 operation ID 執行 resume。", 6, true
 	case errors.Is(err, bundle.ErrUnavailable):
@@ -474,7 +533,7 @@ func classify(err error) (string, string, int, bool) {
 	case errors.Is(err, auth.ErrPermissionDenied):
 		return "permission_denied", "此身分沒有所需權限。", 4, false
 	case errors.Is(err, operation.ErrOperationBusy):
-		return "operation_busy", "相同 profile 正在使用中。", 5, true
+		return "operation_busy", "相同安裝環境、profile 或操作正在使用中。", 5, true
 	case errors.Is(err, auth.ErrAuthUnavailable):
 		return "auth_unavailable", "驗證服务暫時無法確認結果。", 6, true
 	case errors.Is(err, auth.ErrInvalidAuthResponse):

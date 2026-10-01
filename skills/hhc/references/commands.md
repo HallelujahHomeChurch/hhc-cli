@@ -81,6 +81,24 @@ Exit 0 paired with `validating` or `requestedActionSatisfied=false` contradicts
 this command contract: report an unconfirmed result and reconcile once using
 the same operation's resume. Do not convert it into success.
 
-The development CLI does not yet expose `update`. Do not issue it from these
-examples. Once a matching released skill documents the updater, a busy updater
-must wait for active work and retry its own command, not `recordings resume`.
+## Explicit updates
+
+Only when requested:
+
+```json
+["hhc", "update", "--check", "--json", "--no-input"]
+```
+
+```json
+["hhc", "update", "--json", "--no-input"]
+```
+
+No recording operation ID or login is required. A check only reports
+`data.available`; it does not install. Installation requires exit 0, `ok=true`,
+and `data.installed=true`. A busy updater must wait for active work and retry
+its own command once, not `recordings resume`. After success, read `hhc version
+--json` and the installed version's skill. Preserve any agent-owned skill copy.
+`managed_install_required` means portable mode: follow the published installation
+instructions rather than overwriting the running executable. A development build
+with `release_trust_unavailable` cannot authenticate releases; stop without a
+checksum-only, PATH, unsigned-download, or privilege-elevation workaround.

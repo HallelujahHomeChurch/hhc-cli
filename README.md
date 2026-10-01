@@ -90,11 +90,47 @@ user operations. Keep it unchanged when resuming an operation.
 The native command fixture builds a real CLI with embedded fixture-tool hashes,
 then exercises prepare and resume without changing its Chinese-path source.
 The distributed FFmpeg builds, automatic hardware qualification,
-updater and final release integration are still being implemented;
+and final signed release integration are still being implemented;
 these development commands are not a released end-to-end uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship a release,
 verified FFmpeg bundle or complete preparation/upload workflow.
+
+## Managed installation and explicit updates (development)
+
+The implementation now supports `hhc install --directory ABSOLUTE_NEW_DIRECTORY`
+and `hhc update [--check]`, with `--json --no-input` for automation. Neither needs
+an account login. Signed application release artifacts and their trust key are
+not provisioned yet; development builds fail closed with
+`release_trust_unavailable` instead of downloading unsigned code.
+
+From a verified release, choose a new user-writable directory whose parent exists
+(for example `%LOCALAPPDATA%\HHC-CLI` on Windows or
+`~/Library/Application Support/HHC-CLI` on macOS, expanded to an absolute path).
+Install downloads the signed current stable bundle, verifies it, and creates:
+
+```text
+HHC-CLI/
+  hhc[.exe]             stable launcher; invoke this entrypoint
+  current.json         atomic current/previous version selection
+  versions/<version>/  CLI, bundled tools, skill, licenses and sources
+  skills/hhc/SKILL.md   stable skill router; use in place
+```
+
+Installation never overwrites an existing directory, changes PATH, elevates
+privileges, or moves account credentials or operation journals. Configure PATH
+explicitly if desired; a portable binary's `update` reports
+`managed_install_required`. Agent-owned copies of the versioned skill are not
+silently replaced. Keep the stable router in place, or explicitly copy a matching
+versioned skill into your agent's skill directory.
+
+Update verifies an Ed25519-signed manifest and SHA-256 before extracting or
+executing the new version, checks its tool bundle offline, and switches the
+version pointer only after success. Active managed commands make updates return
+`operation_busy`. Old bundles remain for safe recovery; this consumes one bundle
+per installed version. No background update, forced termination or source cleanup
+is performed. Release-manifest signatures are not Windows Authenticode or Apple
+Developer ID/notarization; those platform-signing guarantees are not claimed.
 
 The approved target is Windows amd64 and macOS arm64, bundled FFmpeg, local HLS
 preparation, human/service login, resumable direct upload, explicit publication

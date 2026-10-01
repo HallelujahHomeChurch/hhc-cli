@@ -44,6 +44,8 @@ jobs:
         run: go test -race ./internal/operation -count=1
       - name: Test native operation journals and crash recovery
         run: go test -race ./internal/recordings -count=1
+      - name: Test signed-update mechanics and native version switching (fixture tools)
+        run: go test -race ./internal/update -count=1
 
       - name: Install Windows media fixtures (not the release bundle)
         if: runner.os == 'Windows'

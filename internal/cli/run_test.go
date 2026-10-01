@@ -21,6 +21,47 @@ import (
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 )
 
+func TestVersionSelfCheckRejectsUnverifiedBundle(t *testing.T) {
+	var out bytes.Buffer
+	exit := Run(context.Background(), []string{"version", "--self-check", "--json"}, nil, &out, io.Discard, "1.2.3")
+	var value result
+	if err := json.Unmarshal(out.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	if exit != 5 || value.OK || value.Error == nil || value.Error.Code != "ffmpeg_bundle_unavailable" {
+		t.Fatalf("unbundled self-check: %d %s", exit, out.String())
+	}
+}
+
+func TestPortableUpdateNeverClaimsInstallation(t *testing.T) {
+	var out bytes.Buffer
+	exit := Run(context.Background(), []string{"update", "--json", "--no-input"}, nil, &out, io.Discard, "1.2.3")
+	var value result
+	if err := json.Unmarshal(out.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	if exit != 5 || value.OK || value.Error == nil || value.Error.Code != "managed_install_required" || value.Profile != nil {
+		t.Fatalf("portable update: %d %s", exit, out.String())
+	}
+}
+
+func TestInstallPreservesExistingDirectory(t *testing.T) {
+	directory := t.TempDir()
+	sentinel := filepath.Join(directory, "user-file")
+	if err := os.WriteFile(sentinel, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	exit := Run(context.Background(), []string{"install", "--directory", directory, "--json", "--no-input"}, nil, &out, io.Discard, "1.2.3")
+	var value result
+	if json.Unmarshal(out.Bytes(), &value) != nil || exit != 5 || value.OK || value.Error == nil || value.Error.Code != "managed_install_required" {
+		t.Fatalf("existing install: %d %s", exit, out.String())
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "preserve" {
+		t.Fatal("changed existing directory")
+	}
+}
+
 func TestPreparationErrorsHaveSafeActionableCodes(t *testing.T) {
 	for _, tc := range []struct {
 		err  error

@@ -4,4 +4,4 @@ package operation
 
 import "os"
 
-func lockWorkspace(*os.File) error { return os.ErrInvalid }
+func lockWorkspace(*os.File, bool) error { return os.ErrInvalid }
