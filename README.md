@@ -6,7 +6,11 @@ Implementation is in progress. This producer checkpoint contains the versioned
 HLS inventory/digest contract, independent source/package budgets and source
 rendition planning, bounded ffprobe metadata parsing and the fixed CPU encode
 arguments, measured-bandwidth master playlist builder and bounded streaming
-package inventory assembly, with actual 65-second dual-rendition tests.
+package inventory assembly, with actual 65-second dual-rendition tests at 2 and
+30 fps. Bounded init+fragment probes now measure codecs and verify packet/A/V
+continuity, playlist closure and rendition start alignment. Sparse video limits
+x264 lookahead and disables B-frames below 20 fps to preserve fragment alignment;
+normal 24–30 fps retains medium's 40-frame lookahead and three B-frames.
 Local probe/encode processes use bounded output and native process-tree
 cancellation (Windows Job Objects and macOS process groups), not shell/PATH
 execution. The actual fixture probes its source through this runner before

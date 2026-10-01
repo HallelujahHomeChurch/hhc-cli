@@ -14,6 +14,7 @@ type RenditionMedia struct {
 	SegmentDurations []float64
 	TargetDuration   int
 	Codecs           string // Must come from the actual encoded AVCC/AAC probe.
+	StartSeconds     float64
 }
 
 var recordingCodecs = regexp.MustCompile(`^avc1\.[0-9a-fA-F]{6},mp4a\.40\.2$`)
@@ -32,10 +33,10 @@ func BuildMasterPlaylist(media []RenditionMedia) ([]byte, error) {
 	master.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
 	for n, m := range media {
 		r := m.Rendition
-		if !validRecordingRendition(r) || !recordingCodecs.MatchString(m.Codecs) || len(m.SegmentBytes) != r.SegmentCount {
+		if !validRecordingRendition(r) || !recordingCodecs.MatchString(m.Codecs) || len(m.SegmentBytes) != r.SegmentCount || math.IsNaN(m.StartSeconds) || math.IsInf(m.StartSeconds, 0) {
 			return nil, ErrInvalidInput
 		}
-		if n > 0 && (r.Name != "1080p" || r.Height <= low.Height || r.VideoBitrate < low.VideoBitrate || r.FrameRate != low.FrameRate || math.Abs(r.DurationSeconds-low.DurationSeconds) > 1/low.FrameRate+0.001) {
+		if n > 0 && (r.Name != "1080p" || r.Height <= low.Height || r.VideoBitrate < low.VideoBitrate || r.FrameRate != low.FrameRate || math.Abs(r.DurationSeconds-low.DurationSeconds) > 1/low.FrameRate+0.001 || math.Abs(m.StartSeconds-media[0].StartSeconds) > 1/low.FrameRate+0.001) {
 			return nil, ErrInvalidInput
 		}
 		peak, average, err := RecordingPlaylistBitrates(m.SegmentBytes, m.SegmentDurations, m.TargetDuration)

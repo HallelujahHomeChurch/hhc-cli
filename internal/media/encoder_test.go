@@ -40,6 +40,12 @@ func TestCPUEncodeRejectsNetworkInputAndInvalidRendition(t *testing.T) {
 
 // Explicit tools are a test fixture only; production must verify its bundle.
 func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
+	for _, fps := range []int{2, 30} {
+		t.Run(strconv.Itoa(fps), func(t *testing.T) { testCPUEncodeAligned(t, fps) })
+	}
+}
+
+func testCPUEncodeAligned(t *testing.T, fps int) {
 	ffmpeg, ffprobe := os.Getenv("HHC_TEST_FFMPEG"), os.Getenv("HHC_TEST_FFPROBE")
 	if ffmpeg == "" || ffprobe == "" {
 		if os.Getenv("HHC_REQUIRE_MEDIA_TESTS") == "1" {
@@ -66,7 +72,7 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := filepath.Join(dir, "聚會 原始.mp4")
-	run(ffmpeg, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r=2", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "65", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", source)
+	run(ffmpeg, "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r="+strconv.Itoa(fps), "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "65", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", source)
 	before, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +88,7 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		t.Fatalf("actual source fingerprint: %+v %v %v", fingerprint, fingerprintErr, closeErr)
 	}
 	metadata, err := ProbeSource(ctx, ffprobe, source)
-	if err != nil || metadata.Width != 1920 || metadata.Height != 1080 || metadata.FrameRate != 2 || metadata.DurationSeconds != 65 || !metadata.HasAudio {
+	if err != nil || metadata.Width != 1920 || metadata.Height != 1080 || metadata.FrameRate != float64(fps) || metadata.DurationSeconds != 65 || !metadata.HasAudio {
 		t.Fatalf("actual source probe: %+v %v", metadata, err)
 	}
 	plan, err := PlanSource(metadata, DefaultEncodeOptions())
@@ -102,6 +108,10 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		}
 		if _, err := operation.RunTool(ctx, ffmpeg, args, 1<<20); err != nil {
 			t.Fatalf("bounded native encode: %v", err)
+		}
+		actual, err := MeasureRendition(ctx, ffprobe, output, r)
+		if err != nil || len(actual.SegmentBytes) != 3 || actual.SegmentDurations[0] != 30 || actual.Codecs == "" {
+			t.Fatalf("bounded encoded measurement: %+v %v", actual, err)
 		}
 		playlistPath := filepath.Join(output, "index.m3u8")
 		playlist, err := os.ReadFile(playlistPath)
@@ -196,7 +206,7 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 		for _, s := range media.Streams {
 			switch s.Type {
 			case "video":
-				if s.Codec != "h264" || s.Width != r.Width || s.Height != r.Height || s.SAR != "1:1" || s.Pixels != "yuv420p" || s.Rate != "2/1" {
+				if s.Codec != "h264" || s.Width != r.Width || s.Height != r.Height || s.SAR != "1:1" || s.Pixels != "yuv420p" || s.Rate != strconv.Itoa(fps)+"/1" {
 					t.Fatalf("bad video %+v", s)
 				}
 			case "audio":

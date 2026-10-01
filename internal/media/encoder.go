@@ -18,6 +18,14 @@ func CPUEncodeArguments(source, output string, rendition RecordingRendition) ([]
 	fps := strconv.FormatFloat(rendition.FrameRate, 'f', -1, 64)
 	gop := strconv.Itoa(int(math.Ceil(rendition.FrameRate * 30)))
 	maxrate := rendition.VideoBitrate * 4 / 3
+	// x264 medium's 40-frame lookahead can exceed mux interleave buffering
+	// for low-frame-rate sources and push audio into the wrong HLS fragment.
+	// Keep the normal 40 frames, capped to two seconds for sparse video.
+	lookahead := strconv.Itoa(min(40, max(1, int(math.Ceil(rendition.FrameRate*2)))))
+	bframes := "3"
+	if rendition.FrameRate < 20 {
+		bframes = "0"
+	} // Keep DTS/PTS segment boundaries within 100 ms for sparse video.
 	return []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-n",
 		"-protocol_whitelist", "file", "-format_whitelist", "mov,matroska", "-enable_drefs", "0",
@@ -25,6 +33,7 @@ func CPUEncodeArguments(source, output string, rendition RecordingRendition) ([]
 		"-map", "0:V:0", "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
 		"-filter_threads", "2", "-vf", "scale=" + strconv.Itoa(rendition.Width) + ":" + strconv.Itoa(rendition.Height) + ":flags=lanczos,setsar=1",
 		"-c:v", "libx264", "-preset", "medium", "-profile:v", "high", "-pix_fmt", "yuv420p", "-threads", "2",
+		"-rc-lookahead", lookahead, "-bf", bframes,
 		"-b:v", i(rendition.VideoBitrate), "-maxrate", i(maxrate), "-bufsize", i(2 * maxrate),
 		"-r", fps, "-fps_mode", "cfr", "-g", gop, "-keyint_min", gop, "-sc_threshold", "0", "-flags", "+cgop",
 		"-force_key_frames", "expr:gte(t,n_forced*30)",

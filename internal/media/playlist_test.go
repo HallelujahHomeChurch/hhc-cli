@@ -31,6 +31,7 @@ func TestMasterUsesMeasuredSegmentBandwidthInsteadOfEncodeSettings(t *testing.T)
 		func(m *RenditionMedia) { m.Codecs = "hev1.1.6.L93,mp4a.40.2" }, func(m *RenditionMedia) { m.Rendition.Name = "../escape" },
 		func(m *RenditionMedia) { m.SegmentBytes = []int64{100} }, func(m *RenditionMedia) { m.SegmentDurations = []float64{30, 4} },
 		func(m *RenditionMedia) { m.TargetDuration = 0 }, func(m *RenditionMedia) { m.SegmentBytes = []int64{0, 100} },
+		func(m *RenditionMedia) { m.StartSeconds = 1 },
 	} {
 		bad := append([]RenditionMedia(nil), media...)
 		mutate(&bad[0])
