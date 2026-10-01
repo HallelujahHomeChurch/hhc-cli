@@ -101,8 +101,11 @@ func runTool(ctx context.Context, binary string, args []string, stdout io.Writer
 	close(done)
 	<-stopped
 	copyErr := <-copied
-	if waitErr != nil || exitErr != nil || terminateErr != nil || copyErr != nil || exit != 0 {
-		return ErrProcessFailed
+	if waitErr != nil || exitErr != nil || terminateErr != nil || copyErr != nil {
+		return &ProcessFailure{Stage: "supervisor", ExitCode: -1}
+	}
+	if exit != 0 {
+		return &ProcessFailure{Stage: "tool", ExitCode: int(exit)}
 	}
 	return nil
 }
