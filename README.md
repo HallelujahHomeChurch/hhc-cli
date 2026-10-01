@@ -62,7 +62,12 @@ interprets 202 as completion. Interrupted operations keep their original key.
 publication path. Transient control calls have three attempts with bounded backoff
 and Retry-After; ambiguous completion first queries server status. A rejected
 upload URL is re-signed only once. Permission and state conflicts never retry.
-Local preparation/bundle integration and managed temporary cleanup are still being implemented; these
+The CPU preparation pipeline now holds a native stable source, preflights disk
+space, monitors generated-byte/free-space budgets, measures actual fragments and
+atomically finalizes a new package without overwriting existing output. Local
+tests verify source preservation and snapshot/scratch cleanup. Native CI now also
+runs actual CPU media fixtures on Windows and macOS; these are not release bundles.
+CLI preparation/bundle integration and managed upload-temp cleanup are still being implemented; these
 development commands are not a released end-to-end uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship a release,

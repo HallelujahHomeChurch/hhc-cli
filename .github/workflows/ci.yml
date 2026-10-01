@@ -44,6 +44,28 @@ jobs:
         run: go test -race ./internal/operation -count=1
       - name: Test native operation journals and crash recovery
         run: go test -race ./internal/recordings -count=1
+
+      - name: Install Windows media fixtures (not the release bundle)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ffmpeg --yes --no-progress
+      - name: Test actual native Windows CPU preparation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:HHC_TEST_FFMPEG = (Get-Command ffmpeg.exe).Source
+          $env:HHC_TEST_FFPROBE = (Get-Command ffprobe.exe).Source
+          $env:HHC_REQUIRE_MEDIA_TESTS = "1"
+          go test -race ./internal/media -count=1
+      - name: Install macOS media fixtures (not the release bundle)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Test actual native macOS CPU preparation
+        if: runner.os == 'macOS'
+        run: |
+          HHC_TEST_FFMPEG="$(command -v ffmpeg)" \
+          HHC_TEST_FFPROBE="$(command -v ffprobe)" \
+          HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media -count=1
       - name: Test native loopback authentication (not real browser or credential-store acceptance)
         run: go test -race ./internal/auth -count=1
       - name: Test native credential storage with disposable test entries
