@@ -53,6 +53,7 @@ type JournalState struct {
 	RecordingID            string                  `json:"recordingId"`
 	PackageID              string                  `json:"packageId"`
 	SessionID              string                  `json:"sessionId"`
+	SessionExpiresAt       time.Time               `json:"sessionExpiresAt"`
 	PublishExpectedVersion int64                   `json:"publishExpectedVersion"`
 	GeneratedOwned         bool                    `json:"generatedOwned"`
 	PackageBytes           int64                   `json:"packageBytes"`
@@ -164,6 +165,9 @@ func (j *Journal) Save(next JournalState) error {
 		return ErrOperationConflict
 	}
 	if j.state.GeneratedOwned && !next.GeneratedOwned || j.state.PackageBytes != 0 && next.PackageBytes != j.state.PackageBytes {
+		return ErrOperationConflict
+	}
+	if !j.state.SessionExpiresAt.IsZero() && (next.SessionExpiresAt.IsZero() || next.SessionExpiresAt.After(j.state.SessionExpiresAt)) {
 		return ErrOperationConflict
 	}
 	next.UpdatedAt = time.Now().UTC()

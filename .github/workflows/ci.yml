@@ -53,8 +53,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:HHC_TEST_FFMPEG = (Get-Command ffmpeg.exe).Source
-          $env:HHC_TEST_FFPROBE = (Get-Command ffprobe.exe).Source
+          $mediaToolRoot = Join-Path $env:ChocolateyInstall 'lib\ffmpeg\tools'
+          $mediaEncoders = @(Get-ChildItem -LiteralPath $mediaToolRoot -Filter ffmpeg.exe -File -Recurse)
+          if ($mediaEncoders.Count -ne 1) { throw 'Expected one actual fixture encoder, not a Chocolatey shim' }
+          $env:HHC_TEST_FFMPEG = $mediaEncoders[0].FullName
+          $env:HHC_TEST_FFPROBE = Join-Path $mediaEncoders[0].DirectoryName 'ffprobe.exe'
+          if (-not (Test-Path -LiteralPath $env:HHC_TEST_FFPROBE -PathType Leaf)) { throw 'Fixture probe missing' }
           $env:HHC_REQUIRE_MEDIA_TESTS = "1"
           go test -race ./internal/media ./internal/cli -count=1
       - name: Install macOS media fixtures (not the release bundle)

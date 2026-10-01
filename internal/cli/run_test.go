@@ -38,15 +38,10 @@ func TestPreparationErrorsHaveSafeActionableCodes(t *testing.T) {
 }
 
 func TestStandalonePrepareDoesNotRequireLoginOrProfile(t *testing.T) {
+	operations := t.TempDir()
+	t.Setenv("HHC_CLI_OPERATIONS_DIR", operations)
 	id := fmt.Sprintf("00000000-0000-4000-8000-%012x", uint64(time.Now().UnixNano())&0xffffffffffff)
-	directory, err := os.UserConfigDir()
-	if runtime.GOOS == "windows" {
-		directory, err = os.UserCacheDir()
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	owned := filepath.Join(directory, "HHC", "cli", "operations", id)
+	owned := filepath.Join(operations, id)
 	if _, err := os.Stat(owned); !os.IsNotExist(err) {
 		t.Fatal("fixture ID collision")
 	}
@@ -64,6 +59,9 @@ func TestStandalonePrepareDoesNotRequireLoginOrProfile(t *testing.T) {
 	}
 	if code != 5 || value.Error == nil || value.Error.Code != "ffmpeg_bundle_unavailable" || value.Profile != nil || value.Principal != nil {
 		t.Fatalf("local prepare: %d %s", code, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(owned, "journal.json")); err != nil {
+		t.Fatal("ignored isolated operation storage")
 	}
 }
 
@@ -118,6 +116,7 @@ func (f tokenFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error
 }
 
 func TestNativeServiceCommandsUseCredentialStoreAndRedactSecret(t *testing.T) {
+	t.Setenv("HHC_CLI_OPERATIONS_DIR", t.TempDir())
 	if os.Getenv("HHC_TEST_NATIVE_CREDENTIALS") != "1" {
 		t.Skip("requires native credential fixture opt-in")
 	}

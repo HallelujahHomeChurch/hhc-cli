@@ -211,6 +211,19 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	if err != nil || !filepath.IsAbs(directory) {
 		return finish(auth.ErrCredentialStoreUnavailable)
 	}
+	operations := filepath.Join(directory, "HHC", "cli", "operations")
+	if configured := os.Getenv("HHC_CLI_OPERATIONS_DIR"); configured != "" {
+		if !filepath.IsAbs(configured) {
+			return finish(auth.ErrInvalidAuthInput)
+		}
+		operations = filepath.Clean(configured)
+	}
+	if strings.HasPrefix(r.Command, "recordings ") {
+		report, sweepErr := recordings.SweepExpired(operations, time.Now().UTC())
+		if sweepErr != nil || report.Failed != 0 {
+			fmt.Fprintln(diagnostics, "部分已過期暫存尚未清理；未移除原始影片或使用者輸出。")
+		}
+	}
 	if r.Command == "recordings prepare" || r.Command == "recordings resume" {
 		var intent *recordings.Intent
 		if r.Command == "recordings prepare" {
@@ -222,7 +235,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 			options := media.DefaultEncodeOptions()
 			intent = &recordings.Intent{Command: "prepare", Input: source, Output: output, VideoBitrate720: options.VideoBitrate720, VideoBitrate1080: options.VideoBitrate1080}
 		}
-		journal, err := recordings.OpenJournal(filepath.Join(directory, "HHC", "cli", "operations"), operationID, intent)
+		journal, err := recordings.OpenJournal(operations, operationID, intent)
 		if err != nil {
 			return finish(err)
 		}
@@ -233,6 +246,9 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 				fmt.Fprintln(diagnostics, "Operation:", operationID)
 			}
 			r.Data, err = recordings.Prepare(ctx, journal)
+			if err != nil {
+				err = errors.Join(err, journal.Save(journal.State()))
+			}
 			return finish(err)
 		}
 		journal.Close()
@@ -276,7 +292,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 				intent.Prepare, intent.VideoBitrate720, intent.VideoBitrate1080 = true, options.VideoBitrate720, options.VideoBitrate1080
 			}
 		}
-		journal, err := recordings.OpenJournal(filepath.Join(directory, "HHC", "cli", "operations"), operationID, intent)
+		journal, err := recordings.OpenJournal(operations, operationID, intent)
 		if err != nil {
 			return finish(err)
 		}
@@ -297,6 +313,9 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 			err = publishErr
 		} else {
 			r.Data, err = recordings.UploadPrepared(ctx, client, recordings.NewUploader(), journal)
+		}
+		if err != nil {
+			err = errors.Join(err, journal.Save(journal.State()))
 		}
 		return finish(err)
 	case "recordings get":

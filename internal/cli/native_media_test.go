@@ -33,6 +33,8 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	parent := t.TempDir()
+	operations := t.TempDir()
+	t.Setenv("HHC_CLI_OPERATIONS_DIR", operations)
 	toolDirectory := filepath.Join(parent, "ffmpeg")
 	if err := os.Mkdir(toolDirectory, 0700); err != nil {
 		t.Fatal(err)
@@ -63,6 +65,9 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 			t.Fatalf("fixture copy: %v %v", err, closeErr)
 		}
 		*tool.target = bundle.File{SHA256: hex.EncodeToString(hash.Sum(nil)), SizeBytes: size}
+		if out, err := exec.CommandContext(ctx, filepath.Join(toolDirectory, name), "-version").CombinedOutput(); err != nil {
+			t.Fatalf("copied fixture tool is not self-contained: %v %s", err, out)
+		}
 	}
 	encoded, _ := json.Marshal(manifest)
 	binary := filepath.Join(parent, "hhc")
@@ -83,17 +88,10 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(original)
-	config, err := os.UserConfigDir()
-	if runtime.GOOS == "windows" {
-		config, err = os.UserCacheDir()
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
 	// A fixed UUID is safe because each native runner is isolated; an existing
 	// directory is a collision, never permission to delete somebody else's data.
 	id := "00000000-0000-4000-8000-000000009907"
-	journal := filepath.Join(config, "HHC", "cli", "operations", id)
+	journal := filepath.Join(operations, id)
 	if _, err := os.Stat(journal); !os.IsNotExist(err) {
 		t.Fatal("fixture operation collision")
 	}

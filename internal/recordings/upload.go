@@ -130,6 +130,7 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 			return result, err
 		}
 		state.PackageID, state.SessionID = pkg.PackageID, pkg.SessionID
+		state.SessionExpiresAt = pkg.ExpiresAt
 		if err := j.Save(state); err != nil {
 			return result, err
 		}
@@ -155,6 +156,12 @@ reconcile:
 			return result, err
 		}
 		result.Package = pkg
+		if state.SessionExpiresAt.IsZero() || pkg.ExpiresAt.Before(state.SessionExpiresAt) {
+			state.SessionExpiresAt = pkg.ExpiresAt
+		}
+		if err := j.Save(state); err != nil {
+			return result, err
+		}
 		switch pkg.State {
 		case "ready":
 			root.Close() // Release Windows directory handle before owned cleanup.

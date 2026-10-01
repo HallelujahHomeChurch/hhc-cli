@@ -80,6 +80,13 @@ requires no login and keeps the explicit output. Its tracked scratch directory
 lives on the output volume; finalization never replaces an existing directory.
 `recordings resume UUID` also resumes local preparation without a profile,
 rehashing a saved output rather than encoding again after a finalization crash.
+Recording commands also sweep owned, unlocked temporary workspaces after 24 hours
+of inactivity or the saved upload-session expiry. Journals/receipts, active work,
+originals and explicit outputs are retained. Cleanup failures are reported on
+stderr. `HHC_CLI_OPERATIONS_DIR` may point to an absolute directory on a larger
+disk; it changes only operation storage, never native credentials/profile locks.
+Tests set it to a private temporary directory so maintenance cannot sweep real
+user operations. Keep it unchanged when resuming an operation.
 The native command fixture builds a real CLI with embedded fixture-tool hashes,
 then exercises prepare and resume without changing its Chinese-path source.
 The distributed FFmpeg builds, automatic hardware qualification,
