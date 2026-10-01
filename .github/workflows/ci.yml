@@ -1,0 +1,93 @@
+name: CI
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install media test fixtures (not the release bundle)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Test including actual CPU HLS encoding
+        run: |
+          HHC_TEST_FFMPEG="$(command -v ffmpeg)" \
+          HHC_TEST_FFPROBE="$(command -v ffprobe)" \
+          HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./... -count=1
+      - run: go vet ./...
+      - name: Cross-compile Windows amd64 and macOS arm64 contract checks
+        run: |
+          GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/media-windows.test.exe" ./internal/media
+          GOOS=darwin GOARCH=arm64 go test -c -o "$RUNNER_TEMP/media-darwin.test" ./internal/media
+          GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/auth-windows.test.exe" ./internal/auth
+          GOOS=darwin GOARCH=arm64 go test -c -o "$RUNNER_TEMP/auth-darwin.test" ./internal/auth
+          GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/hhc.exe" ./cmd/hhc
+          GOOS=darwin GOARCH=arm64 go build -o "$RUNNER_TEMP/hhc" ./cmd/hhc
+  native-source:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Test native source stability (not bundle or GPU acceptance)
+        run: go test -race ./internal/operation -count=1
+      - name: Test native operation journals and crash recovery
+        run: go test -race ./internal/recordings -count=1
+      - name: Test signed-update mechanics and native version switching (fixture tools)
+        run: go test -race ./internal/update -count=1
+
+      - name: Install Windows media fixtures (not the release bundle)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ffmpeg --yes --no-progress
+      - name: Test actual native Windows CPU preparation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $mediaToolRoot = Join-Path $env:ChocolateyInstall 'lib\ffmpeg\tools'
+          $mediaEncoders = @(Get-ChildItem -LiteralPath $mediaToolRoot -Filter ffmpeg.exe -File -Recurse)
+          if ($mediaEncoders.Count -ne 1) { throw 'Expected one actual fixture encoder, not a Chocolatey shim' }
+          $env:HHC_TEST_FFMPEG = $mediaEncoders[0].FullName
+          $env:HHC_TEST_FFPROBE = Join-Path $mediaEncoders[0].DirectoryName 'ffprobe.exe'
+          if (-not (Test-Path -LiteralPath $env:HHC_TEST_FFPROBE -PathType Leaf)) { throw 'Fixture probe missing' }
+          $env:HHC_REQUIRE_MEDIA_TESTS = "1"
+          go test -race ./internal/media ./internal/cli -count=1
+      - name: Install macOS media fixtures (not the release bundle)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Test actual native macOS CPU preparation
+        if: runner.os == 'macOS'
+        run: |
+          HHC_TEST_FFMPEG="$(command -v ffmpeg)" \
+          HHC_TEST_FFPROBE="$(command -v ffprobe)" \
+          HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media ./internal/cli -count=1
+      - name: Test native loopback authentication (not real browser or credential-store acceptance)
+        run: go test -race ./internal/auth -count=1
+      - name: Test native credential storage with disposable test entries
+        env:
+          HHC_TEST_NATIVE_CREDENTIALS: "1"
+        run: go test -race ./internal/auth -run TestNativeCredential -count=1
+      - name: Test CLI login status logout using disposable native credentials
+        env:
+          HHC_TEST_NATIVE_CREDENTIALS: "1"
+        run: go test -race ./internal/cli -count=1
+  verify:
+    if: ${{ always() }}
+    needs: [contracts, native-source]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require contract and native platform checks
+        run: |
+          test "${{ needs.contracts.result }}" = success
+          test "${{ needs.native-source.result }}" = success
