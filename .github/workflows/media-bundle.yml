@@ -1,10 +1,19 @@
 name: Media bundle
 on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
   pull_request:
     paths:
       - build/**
       - internal/bundle/**
+      - internal/update/**
+      - cmd/hhc-release/**
+      - skills/hhc/**
       - .github/workflows/media-bundle.yml
+      - .github/workflows/release.yml
 permissions:
   contents: read
 jobs:
@@ -69,6 +78,29 @@ jobs:
         with:
           name: media-bundle-${{ runner.os }}-${{ runner.arch }}
           path: ${{ runner.temp }}/media-bundle/bundle
+          if-no-files-found: error
+          retention-days: 7
+      - name: Package and verify native CLI release
+        shell: bash
+        env:
+          HHC_RELEASE_PUBLIC_KEY: ${{ vars.HHC_RELEASE_PUBLIC_KEY }}
+          HHC_BUILD_VERSION: ${{ inputs.version || '0.0.0' }}
+        run: |
+          if [ -z "$HHC_RELEASE_PUBLIC_KEY" ]; then
+            if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+              echo 'Release trust key must be provisioned before release' >&2
+              exit 1
+            fi
+            # Public test-only key; PR bundles are never published as releases.
+            export HHC_RELEASE_PUBLIC_KEY=0101010101010101010101010101010101010101010101010101010101010101
+          fi
+          go run ./cmd/hhc-release package --version "$HHC_BUILD_VERSION" \
+            --directory "$RUNNER_TEMP/release" --bundle "$RUNNER_TEMP/media-bundle/bundle"
+      - name: Retain verified native application artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hhc-release-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/release/hhc_*
           if-no-files-found: error
           retention-days: 7
       - name: Retain failed build diagnostics

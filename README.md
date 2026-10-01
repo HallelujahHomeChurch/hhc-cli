@@ -136,6 +136,29 @@ The approved target is Windows amd64 and macOS arm64, bundled FFmpeg, local HLS
 preparation, human/service login, resumable direct upload, explicit publication
 and signed manual updates. Original recordings are never deleted by the CLI.
 
+## Maintainer release workflow
+
+`Release` accepts stable `vMAJOR.MINOR.PATCH` tags only when their commit is
+already included in `origin/main`. It reuses the native media-bundle workflow,
+runs actual encoding tests, builds both native CLIs and launchers, embeds the
+tool hashes and public release key, and round-trips each archive through the
+updater's bounded extractor. Bundles include FFmpeg/x264 corresponding source,
+build configuration and license notices, Go/dependency notices, and matching
+agent skill files. PR artifacts use version `0.0.0` and are not public releases.
+
+Maintainers must provision the repository variable `HHC_RELEASE_PUBLIC_KEY`
+(64 lowercase hexadecimal characters) and Actions secret
+`HHC_RELEASE_SIGNING_KEY` (base64-encoded Ed25519 32-byte seed) before tagging.
+Only the publish job receives the private key. The signer verifies the pair,
+signs exact `release.json` bytes and creates `SHA256SUMS`; GitHub publication
+never replaces existing assets. Missing keys stop release, without unsigned
+fallback. No release tag or signing credentials have been provisioned yet.
+
+The first downloaded CLI must come from the trusted repository release; the
+embedded-key update mechanism does not independently establish initial trust.
+Windows SmartScreen and macOS Gatekeeper prompts may remain because these are
+not Authenticode-signed or Apple-notarized application distributions.
+
 ## Verification
 
 Development commands (the new Account producer contract must be released before

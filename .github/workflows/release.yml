@@ -1,0 +1,57 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require a merged stable release and provisioned public trust
+        id: version
+        env:
+          HHC_RELEASE_PUBLIC_KEY: ${{ vars.HHC_RELEASE_PUBLIC_KEY }}
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$HHC_RELEASE_PUBLIC_KEY" =~ ^[0-9a-f]{64}$ ]]
+          git merge-base --is-ancestor HEAD origin/main
+          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+  build:
+    needs: validate
+    uses: ./.github/workflows/media-bundle.yml
+    with:
+      version: ${{ needs.validate.outputs.version }}
+  publish:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: hhc-release-*
+          merge-multiple: true
+          path: release
+      - name: Sign both verified platform artifacts
+        env:
+          HHC_RELEASE_SIGNING_KEY: ${{ secrets.HHC_RELEASE_SIGNING_KEY }}
+          HHC_RELEASE_PUBLIC_KEY: ${{ vars.HHC_RELEASE_PUBLIC_KEY }}
+          HHC_BUILD_VERSION: ${{ needs.validate.outputs.version }}
+        run: go run ./cmd/hhc-release sign --version "$HHC_BUILD_VERSION" --directory "$GITHUB_WORKSPACE/release"
+      - name: Publish once (never replace existing release assets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes --title "HHC CLI $GITHUB_REF_NAME"
