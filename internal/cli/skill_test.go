@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -16,7 +17,16 @@ func TestSkillCommandExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocks := strings.Split(string(doc), "```json\n")
+	for _, newline := range []string{"\n", "\r\n"} {
+		t.Run(fmt.Sprintf("newline-%q", newline), func(t *testing.T) {
+			checkSkillExamples(t, strings.ReplaceAll(strings.ReplaceAll(string(doc), "\r\n", "\n"), "\n", newline))
+		})
+	}
+}
+
+func checkSkillExamples(t *testing.T, doc string) {
+	t.Helper()
+	blocks := strings.Split(strings.ReplaceAll(doc, "\r\n", "\n"), "```json\n")
 	if len(blocks) < 5 {
 		t.Fatal("missing command examples")
 	}
