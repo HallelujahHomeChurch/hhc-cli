@@ -233,7 +233,7 @@ func validIntent(v Intent) bool {
 }
 
 func validState(v JournalState) bool {
-	if v.SchemaVersion != 1 || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 || v.PackageBytes < 0 || v.PackageBytes > media.RecordingPackageMaxBytes || v.GeneratedOwned && (v.Intent.Command != "upload" || !v.Intent.Prepare) {
+	if v.SchemaVersion != 1 || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 || v.PackageBytes < 0 || v.PackageBytes > media.RecordingPackageMaxBytes || v.GeneratedOwned && v.Intent.Command != "prepare" && (v.Intent.Command != "upload" || !v.Intent.Prepare) {
 		return false
 	}
 	if v.LastResult != nil && (v.LastResult.OperationID != v.OperationID || v.LastResult.RecordingID != v.RecordingID || v.LastResult.PackageID != v.PackageID || v.LastResult.PackageDigest != v.PackageDigest) {

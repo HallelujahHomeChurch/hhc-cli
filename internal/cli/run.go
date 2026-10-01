@@ -82,12 +82,14 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fmt.Fprintln(output, "Upload package: hhc recordings upload DIRECTORY --title TITLE --profile NAME --operation-id UUID [--publish] [--timeout 4h] [--json] [--no-input]\nResume: hhc recordings resume UUID --profile NAME [--timeout 4h] [--json] [--no-input]")
 		fmt.Fprintln(output, "Publish: hhc recordings publish ID --profile NAME --operation-id UUID [--timeout 4h] [--json] [--no-input]")
 		fmt.Fprintln(output, "Prepare and upload: hhc recordings upload FILE --prepare --title TITLE --profile NAME --operation-id UUID [--publish] [--json] [--no-input]")
+		fmt.Fprintln(output, "Keep prepared package: hhc recordings prepare FILE --output DIRECTORY --operation-id UUID [--timeout 4h] [--json] [--no-input]")
 		return 0
 	}
 	var flags []string
 	var recordingID string
-	var recordingInput, operationID, title string
+	var recordingInput, recordingOutput, operationID, title string
 	var publish, prepare bool
+	var explicitProfile, noninteractive bool
 	timeout := 4 * time.Hour
 	if args[0] == "version" {
 		r.Command, flags = "version", args[1:]
@@ -98,7 +100,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		if !api.ValidRecordingID(recordingID) {
 			return finish(auth.ErrInvalidAuthInput)
 		}
-	} else if len(args) >= 3 && args[0] == "recordings" && slices.Contains([]string{"upload", "resume", "publish"}, args[1]) {
+	} else if len(args) >= 3 && args[0] == "recordings" && slices.Contains([]string{"upload", "resume", "publish", "prepare"}, args[1]) {
 		r.Command, recordingInput, flags = "recordings "+args[1], args[2], args[3:]
 		if args[1] == "resume" {
 			operationID = recordingInput
@@ -119,7 +121,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	profile := "default"
 	var service, secretStdin bool
 	var clientID, scope string
-	if r.Command != "version" {
+	if r.Command != "version" && r.Command != "recordings prepare" {
 		fs.StringVar(&profile, "profile", "default", "")
 	}
 	if r.Command == "auth login" {
@@ -137,7 +139,11 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	if r.Command == "recordings publish" {
 		fs.StringVar(&operationID, "operation-id", "", "")
 	}
-	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" {
+	if r.Command == "recordings prepare" {
+		fs.StringVar(&operationID, "operation-id", "", "")
+		fs.StringVar(&recordingOutput, "output", "", "")
+	}
+	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" || r.Command == "recordings prepare" {
 		fs.DurationVar(&timeout, "timeout", 4*time.Hour, "")
 	}
 	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 {
@@ -152,15 +158,15 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		}{version, runtime.GOOS + "/" + runtime.GOARCH}
 		return finish(nil)
 	}
-	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" {
-		explicitProfile := false
+	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" || r.Command == "recordings prepare" {
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "profile" {
 				explicitProfile = true
 			}
 		})
-		noninteractive := *noInput || jsonMode || input == nil || !term.IsTerminal(int(input.Fd()))
-		if timeout <= 0 || noninteractive && (!explicitProfile || operationID == "") || r.Command == "recordings upload" && strings.TrimSpace(title) == "" {
+		noninteractive = *noInput || jsonMode || input == nil || !term.IsTerminal(int(input.Fd()))
+		needsProfile := r.Command == "recordings upload" || r.Command == "recordings publish"
+		if timeout <= 0 || noninteractive && (needsProfile && !explicitProfile || operationID == "") || r.Command == "recordings upload" && strings.TrimSpace(title) == "" || r.Command == "recordings prepare" && recordingOutput == "" {
 			return finish(auth.ErrInvalidAuthInput)
 		}
 		if operationID == "" {
@@ -204,6 +210,35 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	}
 	if err != nil || !filepath.IsAbs(directory) {
 		return finish(auth.ErrCredentialStoreUnavailable)
+	}
+	if r.Command == "recordings prepare" || r.Command == "recordings resume" {
+		var intent *recordings.Intent
+		if r.Command == "recordings prepare" {
+			source, sourceErr := filepath.Abs(recordingInput)
+			output, outputErr := filepath.Abs(recordingOutput)
+			if sourceErr != nil || outputErr != nil || source == output {
+				return finish(auth.ErrInvalidAuthInput)
+			}
+			options := media.DefaultEncodeOptions()
+			intent = &recordings.Intent{Command: "prepare", Input: source, Output: output, VideoBitrate720: options.VideoBitrate720, VideoBitrate1080: options.VideoBitrate1080}
+		}
+		journal, err := recordings.OpenJournal(filepath.Join(directory, "HHC", "cli", "operations"), operationID, intent)
+		if err != nil {
+			return finish(err)
+		}
+		if journal.State().Intent.Command == "prepare" {
+			defer journal.Close()
+			r.Profile = nil
+			if !jsonMode {
+				fmt.Fprintln(diagnostics, "Operation:", operationID)
+			}
+			r.Data, err = recordings.Prepare(ctx, journal)
+			return finish(err)
+		}
+		journal.Close()
+		if noninteractive && !explicitProfile {
+			return finish(auth.ErrInvalidAuthInput)
+		}
 	}
 	profiles := auth.NewProfiles(filepath.Join(directory, "HHC", "cli", "profiles"))
 	var token auth.Token

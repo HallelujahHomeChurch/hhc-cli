@@ -75,8 +75,15 @@ Ready resume queries the server before touching source, local media or FFmpeg;
 it retains a small result receipt and does not re-encode or re-upload. A failed
 cleanup returns nonzero; `cleanupBytesRemaining` is null when unknown and zero
 only after successful managed cleanup. Original sources and user packages remain.
-The distributed FFmpeg builds, automatic hardware qualification, standalone
-prepare, updater and final release integration are still being implemented;
+Standalone `recordings prepare FILE --output DIRECTORY --operation-id UUID`
+requires no login and keeps the explicit output. Its tracked scratch directory
+lives on the output volume; finalization never replaces an existing directory.
+`recordings resume UUID` also resumes local preparation without a profile,
+rehashing a saved output rather than encoding again after a finalization crash.
+The native command fixture builds a real CLI with embedded fixture-tool hashes,
+then exercises prepare and resume without changing its Chinese-path source.
+The distributed FFmpeg builds, automatic hardware qualification,
+updater and final release integration are still being implemented;
 these development commands are not a released end-to-end uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship a release,

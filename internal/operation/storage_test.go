@@ -36,3 +36,22 @@ func TestFinalizeDirectoryNeverReplacesExistingOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFinalizeOwnedStagingAcrossParentsOnSameVolume(t *testing.T) {
+	parent := t.TempDir()
+	workspace, err := os.MkdirTemp(parent, ".hhc-prepare-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging, err := os.MkdirTemp(workspace, ".hhc-prepare-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(parent, "user-package")
+	if err := FinalizeDirectory(staging, output); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(output); err != nil || !info.IsDir() {
+		t.Fatal("output missing")
+	}
+}

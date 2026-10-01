@@ -56,7 +56,7 @@ jobs:
           $env:HHC_TEST_FFMPEG = (Get-Command ffmpeg.exe).Source
           $env:HHC_TEST_FFPROBE = (Get-Command ffprobe.exe).Source
           $env:HHC_REQUIRE_MEDIA_TESTS = "1"
-          go test -race ./internal/media -count=1
+          go test -race ./internal/media ./internal/cli -count=1
       - name: Install macOS media fixtures (not the release bundle)
         if: runner.os == 'macOS'
         run: brew install ffmpeg
@@ -65,7 +65,7 @@ jobs:
         run: |
           HHC_TEST_FFMPEG="$(command -v ffmpeg)" \
           HHC_TEST_FFPROBE="$(command -v ffprobe)" \
-          HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media -count=1
+          HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media ./internal/cli -count=1
       - name: Test native loopback authentication (not real browser or credential-store acceptance)
         run: go test -race ./internal/auth -count=1
       - name: Test native credential storage with disposable test entries

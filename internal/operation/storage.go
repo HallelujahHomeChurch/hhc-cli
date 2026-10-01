@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// FinalizeDirectory atomically publishes an owned sibling staging directory.
+// FinalizeDirectory atomically publishes an owned staging directory on the same volume.
 // No overwrite fallback is allowed, including an existing empty user directory.
 func FinalizeDirectory(staging, output string) error {
-	if !filepath.IsAbs(staging) || !filepath.IsAbs(output) || filepath.Dir(staging) != filepath.Dir(output) || !strings.HasPrefix(filepath.Base(staging), ".hhc-prepare-") {
+	if !filepath.IsAbs(staging) || !filepath.IsAbs(output) || !strings.HasPrefix(filepath.Base(staging), ".hhc-prepare-") {
 		return os.ErrInvalid
 	}
 	info, err := os.Lstat(staging)

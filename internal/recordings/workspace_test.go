@@ -64,3 +64,33 @@ func TestUnownedWorkspaceIsNeverAdoptedOrDeleted(t *testing.T) {
 		t.Fatal("lost unowned directory")
 	}
 }
+
+func TestStandaloneWorkspaceOnOutputVolumePreservesUserOutput(t *testing.T) {
+	parent := t.TempDir()
+	intent := Intent{Command: "prepare", Input: filepath.Join(parent, "source.mp4"), Output: filepath.Join(parent, "package"), VideoBitrate720: 1500000, VideoBitrate1080: 3000000}
+	for _, path := range []string{intent.Input, intent.Output} {
+		if err := os.WriteFile(path, []byte("preserve"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, err := OpenJournal(t.TempDir(), journalFixtureID, &intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	directory, err := j.generatedWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(directory) != parent || directory == intent.Output {
+		t.Fatal("not an isolated output-volume workspace")
+	}
+	if err := j.cleanGenerated(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{intent.Input, intent.Output} {
+		if b, err := os.ReadFile(path); err != nil || string(b) != "preserve" {
+			t.Fatal("modified user file")
+		}
+	}
+}

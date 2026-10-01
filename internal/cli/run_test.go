@@ -37,6 +37,36 @@ func TestPreparationErrorsHaveSafeActionableCodes(t *testing.T) {
 	}
 }
 
+func TestStandalonePrepareDoesNotRequireLoginOrProfile(t *testing.T) {
+	id := fmt.Sprintf("00000000-0000-4000-8000-%012x", uint64(time.Now().UnixNano())&0xffffffffffff)
+	directory, err := os.UserConfigDir()
+	if runtime.GOOS == "windows" {
+		directory, err = os.UserCacheDir()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := filepath.Join(directory, "HHC", "cli", "operations", id)
+	if _, err := os.Stat(owned); !os.IsNotExist(err) {
+		t.Fatal("fixture ID collision")
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(owned); err != nil {
+			t.Error(err)
+		}
+	})
+	parent := t.TempDir()
+	var out, diagnostics bytes.Buffer
+	code := Run(context.Background(), []string{"recordings", "prepare", filepath.Join(parent, "source.mp4"), "--output", filepath.Join(parent, "package"), "--operation-id", id, "--json", "--no-input"}, nil, &out, &diagnostics, "test")
+	var value result
+	if err := json.Unmarshal(out.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	if code != 5 || value.Error == nil || value.Error.Code != "ffmpeg_bundle_unavailable" || value.Profile != nil || value.Principal != nil {
+		t.Fatalf("local prepare: %d %s", code, out.String())
+	}
+}
+
 func TestJSONLoginNeverPromptsAndInvalidArgsAreRedacted(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
