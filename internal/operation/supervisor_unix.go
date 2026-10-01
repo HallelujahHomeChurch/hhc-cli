@@ -3,6 +3,7 @@
 package operation
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"os"
@@ -48,10 +49,15 @@ func superviseMedia() int {
 	cmd := exec.Command(request.Binary, request.Args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, os.Stdout, os.Stderr
 	result := byte(0)
+	exitCode := 0
 	if err := cmd.Run(); err != nil {
 		result = 1
+		exitCode = -1
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
 	}
-	status.Write([]byte{result})
+	status.Write(binary.BigEndian.AppendUint16([]byte{result}, uint16(exitCode+1)))
 	// Killing our own dedicated group also reaps media grandchildren. The
 	// parent accepts this deliberate signal only with the separate status byte.
 	unix.Kill(-os.Getpid(), unix.SIGKILL)

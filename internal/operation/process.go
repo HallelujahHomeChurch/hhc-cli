@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,18 @@ import (
 
 var ErrProcessOutputLimit = errors.New("process_output_limit")
 var ErrProcessFailed = errors.New("media_process_failed")
+
+// Failure metadata is deliberately limited to a fixed stage and numeric exit
+// code. Neither source paths nor arbitrary media-tool stderr are returned.
+type ProcessFailure struct {
+	Stage    string
+	ExitCode int
+}
+
+func (e *ProcessFailure) Error() string {
+	return fmt.Sprintf("media_process_failed (%s exit=%d)", e.Stage, e.ExitCode)
+}
+func (e *ProcessFailure) Unwrap() error { return ErrProcessFailed }
 
 // RunTool executes an absolute, caller-verified bundled binary without a shell.
 // It bounds stdout, discards stderr (never echo untrusted media diagnostics),
@@ -38,7 +51,16 @@ func RunTool(ctx context.Context, binary string, args []string, outputLimit int)
 		return nil, cause
 	}
 	if err != nil {
-		return nil, ErrProcessFailed
+		var failure *ProcessFailure
+		if errors.As(err, &failure) {
+			return nil, failure
+		}
+		code := -1
+		var exited interface{ ExitCode() int }
+		if errors.As(err, &exited) {
+			code = exited.ExitCode()
+		}
+		return nil, &ProcessFailure{Stage: "tool", ExitCode: code}
 	}
 	return output.buffer.Bytes(), nil
 }

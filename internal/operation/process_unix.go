@@ -4,6 +4,7 @@ package operation
 
 import (
 	"context"
+	binaryencoding "encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -76,12 +77,22 @@ func runTool(ctx context.Context, binary string, args []string, stdout io.Writer
 	_ = unix.Kill(-cmd.Process.Pid, unix.SIGKILL)
 	close(done)
 	<-stopped
-	status, readErr := io.ReadAll(io.LimitReader(statusRead, 2))
+	status, readErr := io.ReadAll(io.LimitReader(statusRead, 4))
 	var exited *exec.ExitError
-	if readErr == nil && len(status) == 1 && status[0] == 0 && errors.As(err, &exited) {
+	if readErr == nil && len(status) == 3 && errors.As(err, &exited) {
 		if wait, ok := exited.Sys().(syscall.WaitStatus); ok && wait.Signaled() && wait.Signal() == syscall.SIGKILL {
-			return nil
+			code := int(binaryencoding.BigEndian.Uint16(status[1:])) - 1
+			if status[0] == 0 && code == 0 {
+				return nil
+			}
+			if status[0] == 1 {
+				return &ProcessFailure{Stage: "tool", ExitCode: code}
+			}
 		}
 	}
-	return ErrProcessFailed
+	code := -1
+	if errors.As(err, &exited) {
+		code = exited.ExitCode()
+	}
+	return &ProcessFailure{Stage: "supervisor", ExitCode: code}
 }

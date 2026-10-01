@@ -46,6 +46,17 @@ func TestRunToolBoundsOutputAndPreservesArguments(t *testing.T) {
 	}
 }
 
+func TestRunToolFailureReportsExitCodeWithoutRawDiagnostics(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("native platforms")
+	}
+	_, err := RunTool(context.Background(), os.Args[0], []string{"-test.run=^TestRunToolChild$", "--", "fail", "sensitive-fixture"}, 1024)
+	var failure *ProcessFailure
+	if !errors.As(err, &failure) || !errors.Is(err, ErrProcessFailed) || failure.Stage != "tool" || failure.ExitCode != 7 || strings.Contains(err.Error(), "sensitive-fixture") {
+		t.Fatalf("safe process failure: %v", err)
+	}
+}
+
 func TestRunToolCancellationTerminatesDescendants(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		t.Skip("supported native OS required")
@@ -166,6 +177,9 @@ func TestRunToolChild(t *testing.T) {
 		return
 	}
 	switch args[0] {
+	case "fail":
+		fmt.Fprint(os.Stderr, args[1])
+		os.Exit(7)
 	case "owner":
 		_, err := RunTool(context.Background(), os.Args[0], []string{"-test.run=^TestRunToolChild$", "--", "tree", args[1], args[2]}, 1024)
 		if err != nil {
