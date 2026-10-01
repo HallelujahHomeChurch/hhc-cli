@@ -47,7 +47,16 @@ are redacted from formatting and JSON output.
 Operation journals now pin intent and observed remote identifiers under native
 locks, use platform-specific flushed replacement, and refuse unknown schemas.
 Resume must still query the server: local journals are not proof of readiness.
-The upload/resume/publish command orchestration is not yet connected.
+Prepared HLS directories can now use `recordings upload DIRECTORY --title TITLE
+--profile NAME --operation-id UUID [--publish]` and `recordings resume UUID
+--profile NAME`. Both accept `--json --no-input --timeout 4h`. The journal pins
+identity, content digest and publication precondition; server paging determines
+missing objects, with at most three isolated PUTs and 100 signed objects per batch.
+The command waits for remote ready, preserves user-owned packages and never
+interprets 202 as completion. Interrupted operations keep their original key.
+Local preparation/bundle integration, bounded transient retry/re-sign, standalone
+publication and managed temporary cleanup are still being implemented; these
+development commands are not a released end-to-end uploader.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
 it does not establish encoded-media readiness. It does not yet ship a release,
 verified FFmpeg bundle or complete preparation/upload workflow.

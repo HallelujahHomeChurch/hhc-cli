@@ -28,8 +28,11 @@ func (f reroute) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f.transport.RoundTrip(r)
 }
 
-func apiFixture(t *testing.T, handler http.HandlerFunc, changedIdentity bool) (*Client, *int) {
+func apiFixture(t *testing.T, handler http.HandlerFunc, changedIdentity bool, scopes ...string) (*Client, *int) {
 	t.Helper()
+	if len(scopes) == 0 {
+		scopes = []string{"cms:recordings:read"}
+	}
 	grants := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/account/v1/oauth/token" {
@@ -43,7 +46,7 @@ func apiFixture(t *testing.T, handler http.HandlerFunc, changedIdentity bool) (*
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		fmt.Fprintf(w, `{"access_token":"token-%d","token_type":"Bearer","expires_in":600,"scope":"cms:recordings:read","principal":{"type":"service","id":%q,"client_id":"fixture","credential_id":"00000000-0000-4000-8000-000000000012","credential_expires_at":%q}}`, grants, id, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, `{"access_token":"token-%d","token_type":"Bearer","expires_in":600,"scope":%q,"principal":{"type":"service","id":%q,"client_id":"fixture","credential_id":"00000000-0000-4000-8000-000000000012","credential_expires_at":%q}}`, grants, strings.Join(scopes, " "), id, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
 	}))
 	t.Cleanup(server.Close)
 	origin, _ := url.Parse(server.URL)
@@ -51,7 +54,7 @@ func apiFixture(t *testing.T, handler http.HandlerFunc, changedIdentity bool) (*
 	http.DefaultTransport = reroute{server.Client().Transport, origin}
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	renew := func(ctx context.Context) (auth.Token, error) {
-		return auth.NewServiceClient().Exchange(ctx, "fixture", "fixture-secret", []string{"cms:recordings:read"})
+		return auth.NewServiceClient().Exchange(ctx, "fixture", "fixture-secret", scopes)
 	}
 	token, err := renew(context.Background())
 	if err != nil {

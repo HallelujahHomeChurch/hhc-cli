@@ -33,10 +33,14 @@ type Error struct {
 func (e *Error) Error() string { return e.Code }
 
 type Recording struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Status  string `json:"status"`
-	Version int64  `json:"version"`
+	ID        string     `json:"id"`
+	Title     string     `json:"title"`
+	Status    string     `json:"status"`
+	Version   int64      `json:"version"`
+	PackageID string     `json:"packageId,omitempty"`
+	ReadyAt   *time.Time `json:"readyAt,omitempty"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	Hidden    bool       `json:"hidden"`
 }
 
 type Client struct {
@@ -58,6 +62,17 @@ func (c *Client) Principal() auth.Principal {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.token.Principal()
+}
+
+func (c *Client) RequireScopes(scopes ...string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, scope := range scopes {
+		if !slices.Contains(strings.Fields(c.token.Scope()), scope) {
+			return auth.ErrPermissionDenied
+		}
+	}
+	return nil
 }
 
 func (c *Client) GetRecording(ctx context.Context, id string) (Recording, error) {
@@ -94,7 +109,7 @@ func (c *Client) refresh(ctx context.Context) error {
 // Control calls are serialized; presigned byte uploads use a separate client.
 // Mutations never auto-retry on network/5xx: the operation owner reconciles
 // server state using its durable key before deciding the next action.
-func (c *Client) request(ctx context.Context, method, path, scope string, body []byte, headers http.Header, result any) error {
+func (c *Client) request(ctx context.Context, method, path, scope string, body []byte, headers http.Header, result any, expectedStatus ...int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -142,7 +157,7 @@ func (c *Client) request(ctx context.Context, method, path, scope string, body [
 			}
 			continue
 		}
-		err = decodeResponse(response, result)
+		err = decodeResponse(response, result, expectedStatus...)
 		response.Body.Close()
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -152,34 +167,43 @@ func (c *Client) request(ctx context.Context, method, path, scope string, body [
 	return auth.ErrAuthenticationRequired
 }
 
-func decodeResponse(response *http.Response, result any) error {
-	switch response.StatusCode {
-	case 200:
-	case 403:
-		return auth.ErrPermissionDenied
-	case 404:
-		return &Error{Code: "not_found", Status: 404}
-	case 409:
-		return &Error{Code: "operation_conflict", Status: 409}
-	case 412, 428:
-		return &Error{Code: "state_changed", Status: response.StatusCode}
-	case 429:
-		return &Error{Code: "rate_limited", Status: 429, RetryAfter: retryAfter(response.Header.Get("Retry-After"))}
-	default:
-		if response.StatusCode >= 500 {
-			return &Error{Code: "api_unavailable", Status: response.StatusCode, RetryAfter: retryAfter(response.Header.Get("Retry-After"))}
+func decodeResponse(response *http.Response, result any, expectedStatus ...int) error {
+	status := http.StatusOK
+	if len(expectedStatus) == 1 {
+		status = expectedStatus[0]
+	}
+	if response.StatusCode != status {
+		switch response.StatusCode {
+		case 403:
+			return auth.ErrPermissionDenied
+		case 404:
+			return &Error{Code: "not_found", Status: 404}
+		case 409:
+			return &Error{Code: "operation_conflict", Status: 409}
+		case 412, 428:
+			return &Error{Code: "state_changed", Status: response.StatusCode}
+		case 429:
+			return &Error{Code: "rate_limited", Status: 429, RetryAfter: retryAfter(response.Header.Get("Retry-After"))}
+		default:
+			if response.StatusCode >= 500 {
+				return &Error{Code: "api_unavailable", Status: response.StatusCode, RetryAfter: retryAfter(response.Header.Get("Retry-After"))}
+			}
+			if response.StatusCode == 400 || response.StatusCode == 413 {
+				return auth.ErrInvalidAuthInput
+			}
+			return ErrInvalidResponse
 		}
-		if response.StatusCode == 400 || response.StatusCode == 413 {
-			return auth.ErrInvalidAuthInput
-		}
-		return ErrInvalidResponse
 	}
 	contentType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || contentType != "application/json" {
 		return ErrInvalidResponse
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil || len(data) > 1<<20 || !utf8.Valid(data) {
+	limit := int64(1 << 20)
+	if _, packageResponse := result.(*Package); packageResponse {
+		limit = 9 << 20 // The inventory alone may be 8 MiB.
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil || int64(len(data)) > limit || !utf8.Valid(data) {
 		return ErrInvalidResponse
 	}
 	var envelope struct {

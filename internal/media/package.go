@@ -15,6 +15,51 @@ import (
 // It does not write package.json or establish media readiness; the caller must
 // validate actual codecs/timeline and prevent concurrent staging mutations.
 func BuildPackageInventory(ctx context.Context, directory string, renditions []RecordingRendition, presetVersion string) (RecordingPackageInventory, error) {
+	return buildPackageInventory(ctx, directory, renditions, presetVersion, false)
+}
+
+// ReadPackage verifies the complete local inventory without changing user files.
+// Upload still rechecks each opened object immediately before sending bytes.
+func ReadPackage(ctx context.Context, directory string) (RecordingPackageInventory, error) {
+	if !filepath.IsAbs(directory) {
+		return RecordingPackageInventory{}, ErrInvalidInput
+	}
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return RecordingPackageInventory{}, err
+	}
+	defer root.Close()
+	info, err := root.Lstat("package.json")
+	if err != nil {
+		return RecordingPackageInventory{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > RecordingInventoryMaxBytes {
+		return RecordingPackageInventory{}, ErrInvalidInput
+	}
+	f, err := root.Open("package.json")
+	if err != nil {
+		return RecordingPackageInventory{}, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return RecordingPackageInventory{}, ErrInvalidInput
+	}
+	inv, err := DecodeRecordingInventory(f)
+	if err != nil {
+		return RecordingPackageInventory{}, err
+	}
+	actual, err := buildPackageInventory(ctx, directory, inv.Renditions, inv.PresetVersion, true)
+	if err != nil {
+		return RecordingPackageInventory{}, err
+	}
+	if actual.InventoryDigest != inv.InventoryDigest {
+		return RecordingPackageInventory{}, ErrInvalidInput
+	}
+	return actual, nil
+}
+
+func buildPackageInventory(ctx context.Context, directory string, renditions []RecordingRendition, presetVersion string, manifest bool) (RecordingPackageInventory, error) {
 	if !filepath.IsAbs(directory) || len(renditions) < 1 || len(renditions) > 2 || !presetVersionPattern.MatchString(presetVersion) {
 		return RecordingPackageInventory{}, ErrInvalidInput
 	}
@@ -68,6 +113,9 @@ func BuildPackageInventory(ctx context.Context, directory string, renditions []R
 				return RecordingPackageInventory{}, readErr
 			}
 			for _, entry := range entries {
+				if manifest && name == "." && entry.Name() == "package.json" && entry.Type().IsRegular() {
+					continue
+				}
 				if name == "." && entry.IsDir() && allowedDirs[entry.Name()] {
 					continue
 				}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 )
 
@@ -26,18 +27,7 @@ var (
 )
 
 // SignedObject is an ephemeral wire capability, never a journal/output value.
-type SignedObject struct {
-	Path    string      `json:"path"`
-	URL     string      `json:"url"`
-	Method  string      `json:"method"`
-	Headers http.Header `json:"headers"`
-}
-
-func (SignedObject) String() string     { return "[redacted upload capability]" }
-func (s SignedObject) GoString() string { return s.String() }
-func (SignedObject) MarshalJSON() ([]byte, error) {
-	return []byte(`"[redacted upload capability]"`), nil
-}
+type SignedObject = api.SignedObject
 
 type Uploader struct{ http *http.Client }
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -19,7 +20,9 @@ import (
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/auth"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/recordings"
 	"golang.org/x/term"
 )
 
@@ -31,13 +34,15 @@ type result struct {
 	Principal     *auth.Principal `json:"principal"`
 	Data          any             `json:"data"`
 	Error         *commandError   `json:"error"`
+	OperationID   *string         `json:"operationId,omitempty"`
 }
 
 type commandError struct {
-	Code      string  `json:"code"`
-	Message   string  `json:"message"`
-	Retryable bool    `json:"retryable"`
-	RequestID *string `json:"requestId"`
+	Code              string  `json:"code"`
+	Message           string  `json:"message"`
+	Retryable         bool    `json:"retryable"`
+	RequestID         *string `json:"requestId"`
+	ResumeOperationID *string `json:"resumeOperationId,omitempty"`
 }
 
 // Run never prints parser errors, remote response bodies or credential values.
@@ -49,7 +54,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		exit := 0
 		if err != nil {
 			code, message, status, retryable := classify(err)
-			r.Error = &commandError{Code: code, Message: message, Retryable: retryable}
+			r.Error = &commandError{Code: code, Message: message, Retryable: retryable, ResumeOperationID: r.OperationID}
 			exit = status
 		}
 		r.OK = err == nil
@@ -73,10 +78,14 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "help")) {
 		fmt.Fprintln(output, "Usage: hhc version [--json]\n       hhc auth login|status|logout [--profile NAME] [--json] [--no-input]\n\nLogin: --service-principal --client-id ID [--secret-stdin]\n       --scope 'cms:recordings:read cms:recordings:write cms:recordings:publish'\n\nHuman login opens the system browser. Service secrets are hidden; never use a secret argument.")
 		fmt.Fprintln(output, "\nRecording metadata: hhc recordings get ID [--profile NAME] [--json] [--no-input]")
+		fmt.Fprintln(output, "Upload package: hhc recordings upload DIRECTORY --title TITLE --profile NAME --operation-id UUID [--publish] [--timeout 4h] [--json] [--no-input]\nResume: hhc recordings resume UUID --profile NAME [--timeout 4h] [--json] [--no-input]")
 		return 0
 	}
 	var flags []string
 	var recordingID string
+	var recordingInput, operationID, title string
+	var publish bool
+	timeout := 4 * time.Hour
 	if args[0] == "version" {
 		r.Command, flags = "version", args[1:]
 	} else if len(args) >= 2 && args[0] == "auth" && slices.Contains([]string{"login", "status", "logout"}, args[1]) {
@@ -85,6 +94,11 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		r.Command, recordingID, flags = "recordings get", args[2], args[3:]
 		if !api.ValidRecordingID(recordingID) {
 			return finish(auth.ErrInvalidAuthInput)
+		}
+	} else if len(args) >= 3 && args[0] == "recordings" && slices.Contains([]string{"upload", "resume"}, args[1]) {
+		r.Command, recordingInput, flags = "recordings "+args[1], args[2], args[3:]
+		if args[1] == "resume" {
+			operationID = recordingInput
 		}
 	} else {
 		return finish(auth.ErrInvalidAuthInput)
@@ -105,6 +119,14 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fs.StringVar(&clientID, "client-id", "", "")
 		fs.StringVar(&scope, "scope", "cms:recordings:read cms:recordings:write cms:recordings:publish", "")
 	}
+	if r.Command == "recordings upload" {
+		fs.StringVar(&title, "title", "", "")
+		fs.StringVar(&operationID, "operation-id", "", "")
+		fs.BoolVar(&publish, "publish", false, "")
+	}
+	if r.Command == "recordings upload" || r.Command == "recordings resume" {
+		fs.DurationVar(&timeout, "timeout", 4*time.Hour, "")
+	}
 	if err := fs.Parse(flags); err != nil || fs.NArg() != 0 {
 		// Parse can stop before --json. Preserve the requested machine envelope.
 		jsonMode = jsonMode || slices.Contains(args, "--json") || slices.Contains(args, "--json=true")
@@ -116,6 +138,34 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 			Platform string `json:"platform"`
 		}{version, runtime.GOOS + "/" + runtime.GOARCH}
 		return finish(nil)
+	}
+	if r.Command == "recordings upload" || r.Command == "recordings resume" {
+		explicitProfile := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "profile" {
+				explicitProfile = true
+			}
+		})
+		noninteractive := *noInput || jsonMode || input == nil || !term.IsTerminal(int(input.Fd()))
+		if timeout <= 0 || noninteractive && (!explicitProfile || operationID == "") || r.Command == "recordings upload" && strings.TrimSpace(title) == "" {
+			return finish(auth.ErrInvalidAuthInput)
+		}
+		if operationID == "" {
+			var id [16]byte
+			if _, err := rand.Read(id[:]); err != nil {
+				return finish(err)
+			}
+			id[6] = (id[6] & 15) | 64
+			id[8] = (id[8] & 63) | 128
+			operationID = fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:])
+		}
+		if !api.ValidRecordingID(operationID) {
+			return finish(auth.ErrInvalidAuthInput)
+		}
+		r.OperationID = &operationID
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	if err := ctx.Err(); err != nil {
 		return finish(err)
@@ -145,6 +195,42 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	profiles := auth.NewProfiles(filepath.Join(directory, "HHC", "cli", "profiles"))
 	var token auth.Token
 	switch r.Command {
+	case "recordings upload", "recordings resume":
+		token, err = profiles.Token(ctx, profile)
+		if err != nil {
+			return finish(err)
+		}
+		client := api.NewClient(token, func(ctx context.Context) (auth.Token, error) { return profiles.Token(ctx, profile) })
+		principal := client.Principal()
+		r.Principal = &principal
+		scopes := []string{"cms:recordings:read", "cms:recordings:write"}
+		if publish {
+			scopes = append(scopes, "cms:recordings:publish")
+		}
+		if err := client.RequireScopes(scopes...); err != nil {
+			return finish(err)
+		}
+		var intent *recordings.Intent
+		if r.Command == "recordings upload" {
+			path, err := filepath.Abs(recordingInput)
+			if err != nil {
+				return finish(auth.ErrInvalidAuthInput)
+			}
+			intent = &recordings.Intent{Command: "upload", Profile: profile, PrincipalType: principal.Type, PrincipalID: principal.ID, ClientID: principal.ClientID, Input: path, Title: strings.TrimSpace(title), Publish: publish}
+		}
+		journal, err := recordings.OpenJournal(filepath.Join(directory, "HHC", "cli", "operations"), operationID, intent)
+		if err != nil {
+			return finish(err)
+		}
+		defer journal.Close()
+		if journal.State().Intent.Profile != profile {
+			return finish(recordings.ErrOperationConflict)
+		}
+		if !jsonMode {
+			fmt.Fprintln(diagnostics, "Operation:", operationID)
+		}
+		r.Data, err = recordings.UploadPrepared(ctx, client, recordings.NewUploader(), journal)
+		return finish(err)
 	case "recordings get":
 		token, err = profiles.Token(ctx, profile)
 		if err != nil {
@@ -270,6 +356,16 @@ func classify(err error) (string, string, int, bool) {
 		return "timeout", "操作逾時，尚未確認完成。", 6, true
 	case errors.Is(err, auth.ErrInvalidAuthInput):
 		return "invalid_input", "參數無效；請使用 hhc --help。", 2, false
+	case errors.Is(err, media.ErrInvalidInput), errors.Is(err, recordings.ErrInvalidJournal):
+		return "invalid_input", "套件或操作紀錄無效，未確認完成。", 2, false
+	case errors.Is(err, recordings.ErrOperationConflict), errors.Is(err, recordings.ErrPackageChanged):
+		return "operation_conflict", "操作身分、內容或狀態已變更，請檢查原操作。", 5, false
+	case errors.Is(err, recordings.ErrSessionExpired):
+		return "session_expired", "上傳期限已過，不會自動建立另一份錄影。", 5, false
+	case errors.Is(err, recordings.ErrPackageFailed):
+		return "package_failed", "伺服器影片驗證失敗，未發布。", 5, false
+	case errors.Is(err, recordings.ErrTransferUnavailable), errors.Is(err, recordings.ErrUploadURLRejected):
+		return "transfer_unavailable", "上傳未完成，請以原 operation ID 執行 resume。", 6, true
 	case errors.Is(err, auth.ErrAuthenticationRequired):
 		return "authentication_required", "需要執行 hhc auth login 登入。", 3, false
 	case errors.Is(err, auth.ErrCredentialStoreUnavailable):

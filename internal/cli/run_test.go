@@ -149,6 +149,13 @@ func TestNativeServiceCommandsUseCredentialStoreAndRedactSecret(t *testing.T) {
 		if args[1] != "logout" && !strings.Contains(out.String(), `"id":"00000000-0000-4000-8000-000000000011"`) {
 			t.Fatal("missing confirmed identity")
 		}
+		if args[1] == "get" {
+			out.Reset()
+			code := Run(context.Background(), []string{"recordings", "upload", t.TempDir(), "--title", "Fixture", "--operation-id", "00000000-0000-4000-8000-000000000081", "--profile", profile, "--json", "--no-input"}, nil, &out, &diagnostics, "test")
+			if code != 4 || !strings.Contains(out.String(), `"code":"permission_denied"`) {
+				t.Fatalf("upload did not preflight scope: %d %s", code, out.String())
+			}
+		}
 	}
 	if _, err := store.Load(profile); err != auth.ErrCredentialNotFound {
 		t.Fatal("logout retained credential")
