@@ -29,7 +29,7 @@ func CPUEncodeArguments(source, output string, rendition RecordingRendition) ([]
 	return []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-n",
 		"-protocol_whitelist", "file", "-format_whitelist", "mov,matroska", "-enable_drefs", "0",
-		"-noautorotate", "-threads", "2", "-i", source,
+		"-noautorotate", "-threads", "2", "-i", filepath.ToSlash(source),
 		"-map", "0:V:0", "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
 		"-filter_threads", "2", "-vf", "scale=" + strconv.Itoa(rendition.Width) + ":" + strconv.Itoa(rendition.Height) + ":flags=lanczos,setsar=1",
 		"-c:v", "libx264", "-preset", "medium", "-profile:v", "high", "-pix_fmt", "yuv420p", "-threads", "2",
@@ -40,7 +40,7 @@ func CPUEncodeArguments(source, output string, rendition RecordingRendition) ([]
 		"-c:a", "aac", "-b:a", "128000", "-ar", "48000", "-ac", "2",
 		"-f", "hls", "-hls_time", "30", "-hls_playlist_type", "vod", "-hls_segment_type", "fmp4",
 		"-hls_flags", "independent_segments", "-hls_fmp4_init_filename", "init.mp4",
-		"-hls_segment_filename", filepath.Join(output, "seg-%06d.m4s"), filepath.Join(output, "index.m3u8"),
+		"-hls_segment_filename", filepath.ToSlash(filepath.Join(output, "seg-%06d.m4s")), filepath.ToSlash(filepath.Join(output, "index.m3u8")),
 	}, nil
 }
 

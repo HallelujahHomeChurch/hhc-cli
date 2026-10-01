@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,9 @@ func TestRunToolBoundsOutputAndPreservesArguments(t *testing.T) {
 	}
 	if _, err := RunTool(ctx, "relative.exe", nil, 1024); !errors.Is(err, os.ErrInvalid) {
 		t.Fatal(err)
+	}
+	if _, err := RunTool(ctx, binary, []string{"-test.run=^TestRunToolChild$", "--", "echo", string([]byte{255})}, 1024); !errors.Is(err, os.ErrInvalid) {
+		t.Fatalf("invalid path bytes were normalized: %v", err)
 	}
 	cancel()
 	if _, err := RunTool(ctx, binary, args, 1024); !errors.Is(err, context.Canceled) {
@@ -95,6 +99,61 @@ func TestRunToolCancellationTerminatesDescendants(t *testing.T) {
 	}
 }
 
+func TestAbruptOwnerExitTerminatesMediaTree(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("supported native OS required")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "ready")
+	owner := exec.Command(os.Args[0], "-test.run=^TestRunToolChild$", "--", "owner", dir, marker)
+	if err := owner.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Process.Kill()
+	clean := false
+	defer func() {
+		if !clean {
+			data, _ := os.ReadFile(marker)
+			for _, raw := range strings.Fields(string(data)) {
+				pid, err := strconv.Atoi(raw)
+				if err == nil && pid > 1 {
+					p, err := os.FindProcess(pid)
+					if err == nil {
+						p.Kill()
+					}
+				}
+			}
+		}
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("media tree did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := owner.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	owner.Wait()
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		lock, err := LockWorkspace(dir)
+		if err == nil {
+			lock.Close()
+			clean = true
+			break
+		}
+		if !errors.Is(err, ErrOperationBusy) || time.Now().After(deadline) {
+			t.Fatalf("orphaned media after owner exit: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestRunToolChild(t *testing.T) {
 	var args []string
 	for i, arg := range os.Args {
@@ -107,6 +166,12 @@ func TestRunToolChild(t *testing.T) {
 		return
 	}
 	switch args[0] {
+	case "owner":
+		_, err := RunTool(context.Background(), os.Args[0], []string{"-test.run=^TestRunToolChild$", "--", "tree", args[1], args[2]}, 1024)
+		if err != nil {
+			os.Exit(9)
+		}
+		os.Exit(0)
 	case "echo":
 		fmt.Print(args[1])
 		os.Exit(0)
@@ -130,7 +195,7 @@ func TestRunToolChild(t *testing.T) {
 		if err != nil || line != "locked\n" {
 			os.Exit(5)
 		}
-		if os.WriteFile(args[2], []byte("ready"), 0600) != nil {
+		if os.WriteFile(args[2], []byte(fmt.Sprintf("%d %d", os.Getpid(), child.Process.Pid)), 0600) != nil {
 			os.Exit(6)
 		}
 	default:

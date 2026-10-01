@@ -57,7 +57,7 @@ func MeasureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 			info, statErr := root.Lstat(path)
 			if statErr != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > RecordingObjectMaxBytes {
 				probe.Close()
-				return value, ErrInvalidInput
+				return value, fmt.Errorf("%w: fragment file %s (unavailable=%t)", ErrInvalidInput, path, statErr != nil)
 			}
 			file, openErr := root.Open(path)
 			if openErr != nil {

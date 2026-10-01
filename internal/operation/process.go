@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 var ErrProcessOutputLimit = errors.New("process_output_limit")
@@ -21,11 +22,11 @@ func RunTool(ctx context.Context, binary string, args []string, outputLimit int)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !filepath.IsAbs(binary) || strings.ContainsRune(binary, 0) || outputLimit < 1 || outputLimit > 1<<20 {
+	if !filepath.IsAbs(binary) || !utf8.ValidString(binary) || strings.ContainsRune(binary, 0) || outputLimit < 1 || outputLimit > 1<<20 {
 		return nil, os.ErrInvalid
 	}
 	for _, arg := range args {
-		if strings.ContainsRune(arg, 0) {
+		if !utf8.ValidString(arg) || strings.ContainsRune(arg, 0) {
 			return nil, os.ErrInvalid
 		}
 	}
