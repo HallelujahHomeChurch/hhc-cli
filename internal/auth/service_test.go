@@ -26,7 +26,7 @@ func TestServiceExchangeUsesBasicFormAndNeverSerializesBearer(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		fmt.Fprint(w, `{"access_token":"test-bearer","token_type":"Bearer","expires_in":600,"scope":"cms:recordings:write cms:recordings:read"}`)
+		fmt.Fprint(w, withPrincipal(`{"access_token":"test-bearer","token_type":"Bearer","expires_in":600,"scope":"cms:recordings:write cms:recordings:read"}`, "service", "uploader"))
 	}))
 	defer server.Close()
 	client := NewServiceClient()

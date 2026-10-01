@@ -22,13 +22,14 @@ type credentialStore interface {
 // savedProfile is encoded only into the OS credential store. Rotating is a
 // durable fence: a crash or lost response must not replay a consumed refresh.
 type savedProfile struct {
-	Version  int    `json:"version"`
-	Kind     string `json:"kind"`
-	ClientID string `json:"clientId,omitempty"`
-	DeviceID string `json:"deviceId,omitempty"`
-	Scope    string `json:"scope"`
-	Secret   string `json:"secret"`
-	Rotating bool   `json:"rotating,omitempty"`
+	Version   int       `json:"version"`
+	Kind      string    `json:"kind"`
+	ClientID  string    `json:"clientId,omitempty"`
+	DeviceID  string    `json:"deviceId,omitempty"`
+	Scope     string    `json:"scope"`
+	Secret    string    `json:"secret"`
+	Rotating  bool      `json:"rotating,omitempty"`
+	Principal Principal `json:"principal"`
 }
 
 func (savedProfile) String() string     { return "[redacted profile credential]" }
@@ -126,7 +127,14 @@ func (p *Profiles) Token(ctx context.Context, profile string) (Token, error) {
 		return Token{}, err
 	}
 	if value.Kind == "service" {
-		return p.service.Exchange(ctx, value.ClientID, value.Secret, strings.Fields(value.Scope))
+		token, err := p.service.Exchange(ctx, value.ClientID, value.Secret, strings.Fields(value.Scope))
+		if err != nil {
+			return Token{}, err
+		}
+		if !samePrincipal(value.Principal, token.Principal()) {
+			return Token{}, ErrAuthenticationRequired
+		}
+		return token, nil
 	}
 	if value.Rotating {
 		return Token{}, ErrAuthenticationRequired
@@ -139,7 +147,11 @@ func (p *Profiles) Token(ctx context.Context, profile string) (Token, error) {
 	if err != nil {
 		return Token{}, err
 	}
+	if !samePrincipal(value.Principal, credentials.AccessToken().Principal()) {
+		return Token{}, ErrAuthenticationRequired
+	}
 	value.Secret = credentials.RefreshToken()
+	value.Principal = credentials.AccessToken().Principal()
 	value.Scope = credentials.AccessToken().Scope()
 	value.Rotating = false
 	if err := p.save(profile, value); err != nil {
@@ -158,7 +170,7 @@ func (p *Profiles) LoginService(ctx context.Context, profile, clientID, secret s
 	if err != nil {
 		return Token{}, err
 	}
-	if err := p.save(profile, savedProfile{Version: 1, Kind: "service", ClientID: clientID, Scope: token.Scope(), Secret: secret}); err != nil {
+	if err := p.save(profile, savedProfile{Version: 1, Kind: "service", ClientID: clientID, Scope: token.Scope(), Secret: secret, Principal: token.Principal()}); err != nil {
 		return Token{}, err
 	}
 	return token, nil
@@ -188,11 +200,15 @@ func (p *Profiles) LoginHuman(ctx context.Context, profile string, options Human
 	if err != nil {
 		return Token{}, err
 	}
-	value := savedProfile{Version: 1, Kind: "human", DeviceID: options.DeviceID, Scope: credentials.AccessToken().Scope(), Secret: credentials.RefreshToken()}
+	value := savedProfile{Version: 1, Kind: "human", DeviceID: options.DeviceID, Scope: credentials.AccessToken().Scope(), Secret: credentials.RefreshToken(), Principal: credentials.AccessToken().Principal()}
 	if err := p.save(profile, value); err != nil {
 		return Token{}, err
 	}
 	return credentials.AccessToken(), nil
+}
+
+func samePrincipal(saved, issued Principal) bool {
+	return saved.ID == issued.ID && saved.Type == issued.Type && saved.ClientID == issued.ClientID && saved.CredentialID == issued.CredentialID
 }
 
 type LogoutResult struct {

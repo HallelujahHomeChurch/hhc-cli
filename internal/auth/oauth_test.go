@@ -48,7 +48,7 @@ func TestHumanRefreshRotatesWithoutBrowserOrRetry(t *testing.T) {
 					fmt.Fprint(w, `{"error":"invalid_grant","error_description":"old-refresh"}`)
 					return
 				}
-				fmt.Fprintf(w, `{"access_token":"renewed-bearer","token_type":"Bearer","expires_in":900,"scope":%q,"refresh_token":"new-refresh"}`, tc.scope)
+				fmt.Fprint(w, withPrincipal(fmt.Sprintf(`{"access_token":"renewed-bearer","token_type":"Bearer","expires_in":900,"scope":%q,"refresh_token":"new-refresh"}`, tc.scope), "human", "hhc-cli"))
 			}))
 			defer server.Close()
 			client := NewHumanClient()
@@ -145,7 +145,7 @@ func TestLoopbackPKCEStateAndSingleExchange(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		fmt.Fprint(w, `{"access_token":"human-bearer","token_type":"Bearer","expires_in":900,"scope":"cms:recordings:read offline_access","refresh_token":"human-refresh"}`)
+		fmt.Fprint(w, withPrincipal(`{"access_token":"human-bearer","token_type":"Bearer","expires_in":900,"scope":"cms:recordings:read offline_access","refresh_token":"human-refresh"}`, "human", "hhc-cli"))
 	}))
 	defer server.Close()
 	client := NewHumanClient()

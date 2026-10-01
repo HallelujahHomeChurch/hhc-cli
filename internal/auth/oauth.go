@@ -321,9 +321,12 @@ func (c *HumanClient) exchangeHuman(ctx context.Context, form url.Values, reques
 	if !oauthResponseNoStore(response) {
 		return HumanCredentials{}, ErrInvalidAuthResponse
 	}
+	if !validPrincipal(wire.Principal, "human", "hhc-cli") {
+		return HumanCredentials{}, ErrInvalidAuthResponse
+	}
 	expires := started.Add(time.Duration(wire.ExpiresIn)*time.Second - 15*time.Second)
 	if !time.Now().Before(expires) {
 		return HumanCredentials{}, ErrAuthenticationRequired
 	}
-	return HumanCredentials{access: Token{value: wire.AccessToken, expiresAt: expires, scope: strings.Join(actual, " ")}, refresh: wire.RefreshToken}, nil
+	return HumanCredentials{access: Token{value: wire.AccessToken, expiresAt: expires, scope: strings.Join(actual, " "), principal: *wire.Principal}, refresh: wire.RefreshToken}, nil
 }

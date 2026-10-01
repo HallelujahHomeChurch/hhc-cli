@@ -40,13 +40,13 @@ func TestProfileFailedRotationSaveReturnsNoToken(t *testing.T) {
 	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Write([]byte(`{"access_token":"fresh","refresh_token":"rotated","token_type":"Bearer","expires_in":900,"scope":"cms:recordings:read offline_access"}`))
+		w.Write([]byte(withPrincipal(`{"access_token":"fresh","refresh_token":"rotated","token_type":"Bearer","expires_in":900,"scope":"cms:recordings:read offline_access"}`, "human", "hhc-cli")))
 	}))
 	defer s.Close()
 	p := NewProfiles(t.TempDir())
 	store := &memoryCredentials{failAt: 2}
 	p.store = store
-	store.value, _ = json.Marshal(savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "cms:recordings:read offline_access", Secret: "old"})
+	store.value, _ = json.Marshal(savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "cms:recordings:read offline_access", Secret: "old", Principal: profilePrincipal("human", "hhc-cli")})
 	p.human.http.Transport = s.Client().Transport
 	p.human.tokenEndpoint = s.URL
 	got, err := p.Token(context.Background(), "personal")
@@ -66,7 +66,7 @@ func TestProfileLogoutClearsLocalAfterRemoteFailure(t *testing.T) {
 	p := NewProfiles(t.TempDir())
 	store := &memoryCredentials{}
 	p.store = store
-	store.value, _ = json.Marshal(savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "offline_access", Secret: "old", Rotating: true})
+	store.value, _ = json.Marshal(savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "offline_access", Secret: "old", Rotating: true, Principal: profilePrincipal("human", "hhc-cli")})
 	p.human.http.Transport = s.Client().Transport
 	p.human.revokeEndpoint = s.URL
 	result, err := p.Logout(context.Background(), "personal")
@@ -82,7 +82,7 @@ func TestProfileServiceLoginPersistsOnlyAfterSuccessfulExchange(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Cache-Control", "no-store")
 				w.WriteHeader(status)
-				w.Write([]byte(`{"access_token":"service-token","token_type":"Bearer","expires_in":600,"scope":"cms:recordings:read"}`))
+				w.Write([]byte(withPrincipal(`{"access_token":"service-token","token_type":"Bearer","expires_in":600,"scope":"cms:recordings:read"}`, "service", "client")))
 			}))
 			defer s.Close()
 			p := NewProfiles(t.TempDir())
@@ -94,7 +94,7 @@ func TestProfileServiceLoginPersistsOnlyAfterSuccessfulExchange(t *testing.T) {
 			if status == 200 {
 				var saved savedProfile
 				json.Unmarshal(store.value, &saved)
-				if err != nil || saved.Kind != "service" || saved.Secret != "secret" {
+				if err != nil || saved.Kind != "service" || saved.Secret != "secret" || saved.Principal.ID != "00000000-0000-4000-8000-000000000011" {
 					t.Fatalf("service login: %v", err)
 				}
 			} else if !errors.Is(err, ErrAuthenticationRequired) || len(store.value) != 0 {
@@ -126,7 +126,7 @@ func TestProfileRefreshPersistsBeforeReturningAndFencesAmbiguousRotation(t *test
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Cache-Control", "no-store")
-				w.Write([]byte(`{"access_token":"fresh","refresh_token":"rotated","token_type":"Bearer","expires_in":900,"scope":"offline_access"}`))
+				w.Write([]byte(withPrincipal(`{"access_token":"fresh","refresh_token":"rotated","token_type":"Bearer","expires_in":900,"scope":"offline_access"}`, "human", "hhc-cli")))
 			}))
 			defer s.Close()
 			p := NewProfiles(t.TempDir())
@@ -134,7 +134,7 @@ func TestProfileRefreshPersistsBeforeReturningAndFencesAmbiguousRotation(t *test
 			p.store = store
 			p.human.http.Transport = s.Client().Transport
 			p.human.tokenEndpoint = s.URL
-			initial := savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "cms:recordings:read offline_access", Secret: "old"}
+			initial := savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "cms:recordings:read offline_access", Secret: "old", Principal: profilePrincipal("human", "hhc-cli")}
 			store.value, _ = json.Marshal(initial)
 			token, err := p.Token(context.Background(), "personal")
 			if fail {
@@ -175,7 +175,7 @@ func TestProfileLockAndStoreFailurePreventRefresh(t *testing.T) {
 	p := NewProfiles(t.TempDir())
 	s := &memoryCredentials{failSave: true}
 	p.store = s
-	s.value, _ = json.Marshal(savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "cms:recordings:read offline_access", Secret: "old"})
+	s.value, _ = json.Marshal(savedProfile{Version: 1, Kind: "human", DeviceID: strings.Repeat("d", 43), Scope: "cms:recordings:read offline_access", Secret: "old", Principal: profilePrincipal("human", "hhc-cli")})
 	_, err := p.Token(context.Background(), "personal")
 	if !errors.Is(err, ErrCredentialStoreUnavailable) {
 		t.Fatalf("did not fence before network: %v", err)

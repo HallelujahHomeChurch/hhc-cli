@@ -23,6 +23,7 @@ var (
 	ErrInvalidAuthResponse    = errors.New("invalid_auth_response")
 	ErrInvalidAuthInput       = errors.New("invalid_input")
 	bearerPattern             = regexp.MustCompile(`^[a-zA-Z0-9._~+/-]+=*$`)
+	principalIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
 const serviceTokenEndpoint = "https://account.alive.org.tw/api/account/v1/oauth/token"
@@ -33,11 +34,31 @@ type Token struct {
 	value     string
 	expiresAt time.Time
 	scope     string
+	principal Principal
+}
+
+type Principal struct {
+	Type                string    `json:"type"`
+	ID                  string    `json:"id"`
+	ClientID            string    `json:"client_id"`
+	CredentialID        string    `json:"credential_id,omitempty"`
+	CredentialExpiresAt time.Time `json:"credential_expires_at"`
+}
+
+func validPrincipal(p *Principal, kind, client string) bool {
+	if p == nil || p.Type != kind || p.ClientID != client || !principalIDPattern.MatchString(p.ID) || p.ID == "00000000-0000-0000-0000-000000000000" || !p.CredentialExpiresAt.After(time.Now()) {
+		return false
+	}
+	if kind == "human" {
+		return p.CredentialID == ""
+	}
+	return kind == "service" && principalIDPattern.MatchString(p.CredentialID) && p.CredentialID != "00000000-0000-0000-0000-000000000000"
 }
 
 func (t Token) Bearer() string       { return t.value }
 func (t Token) ExpiresAt() time.Time { return t.expiresAt }
 func (t Token) Scope() string        { return t.scope }
+func (t Token) Principal() Principal { return t.principal }
 func (Token) String() string         { return "[redacted access token]" }
 func (t Token) GoString() string     { return t.String() }
 
@@ -135,23 +156,27 @@ func (c *ServiceClient) Exchange(ctx context.Context, clientID, secret string, s
 	if !oauthResponseNoStore(response) {
 		return Token{}, ErrInvalidAuthResponse
 	}
+	if !validPrincipal(wire.Principal, "service", clientID) {
+		return Token{}, ErrInvalidAuthResponse
+	}
 	// Conservatively account for request latency and stop using the token before
 	// server expiry. A credential about to expire needs rotation, not fallback.
 	expires := started.Add(time.Duration(wire.ExpiresIn)*time.Second - 15*time.Second)
 	if !time.Now().Before(expires) {
 		return Token{}, ErrAuthenticationRequired
 	}
-	return Token{value: wire.AccessToken, expiresAt: expires, scope: actual}, nil
+	return Token{value: wire.AccessToken, expiresAt: expires, scope: actual, principal: *wire.Principal}, nil
 }
 
 type oauthResponse struct {
-	AccessToken  string `json:"access_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-	Scope        string `json:"scope"`
-	RefreshToken string `json:"refresh_token"`
-	IDToken      string `json:"id_token"`
-	Error        string `json:"error"`
+	AccessToken  string     `json:"access_token"`
+	TokenType    string     `json:"token_type"`
+	ExpiresIn    int64      `json:"expires_in"`
+	Scope        string     `json:"scope"`
+	RefreshToken string     `json:"refresh_token"`
+	IDToken      string     `json:"id_token"`
+	Error        string     `json:"error"`
+	Principal    *Principal `json:"principal"`
 }
 
 func readOAuthResponse(response *http.Response) (oauthResponse, error) {
