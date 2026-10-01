@@ -62,6 +62,9 @@ if test "$media_suffix" = .exe; then
   tar -xf sources/nv-codec-headers.tar.gz
   tar -xf sources/amf-headers.tar.gz
   tar -xf sources/libvpl.tar.gz
+  # Upstream libvpl PR198: MinGW has the real bounded CRT functions; do not
+  # activate ancient MSVC replacement macros that break current Windows headers.
+  patch -d libvpl-2.17.0 -p1 < "$(dirname "$media_recipe")/libvpl-mingw.patch"
   make -C nv-codec-headers-13.1.15.0 PREFIX="$media_build/prefix" install
   cp -R amf-headers-v1.5.3/AMF "$media_build/prefix/include/"
   cmake -G Ninja -S libvpl-2.17.0 -B vpl-build \
@@ -71,6 +74,7 @@ if test "$media_suffix" = .exe; then
   cmake --build vpl-build --parallel 3
   cmake --install vpl-build
   cp sources/nv-codec-headers.tar.gz sources/amf-headers.tar.gz sources/libvpl.tar.gz bundle/source/
+  cp "$(dirname "$media_recipe")/libvpl-mingw.patch" bundle/source/
   cp nv-codec-headers-13.1.15.0/include/ffnvcodec/nvEncodeAPI.h bundle/licenses/NVIDIA-header-notice.h
   cp amf-headers-v1.5.3/AMF/core/Version.h bundle/licenses/AMF-header-notice.h
   cp libvpl-2.17.0/LICENSE bundle/licenses/libvpl-LICENSE.txt

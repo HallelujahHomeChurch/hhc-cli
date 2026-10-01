@@ -39,7 +39,7 @@ jobs:
           update: true
           path-type: inherit
           install: >-
-            make tar curl gnupg diffutils
+            make tar curl gnupg diffutils patch
             mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja

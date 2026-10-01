@@ -31,6 +31,9 @@ probe and use CPU; neither encoder-list detection nor a hosted CI build proves
 hardware availability. See the [AMF build instructions](https://github.com/GPUOpen-LibrariesAndSDKs/AMF/wiki/Build-FFmpeg-with-AMF-Support),
 [Intel libvpl source](https://github.com/intel/libvpl), and
 [NVIDIA codec headers](https://github.com/FFmpeg/nv-codec-headers).
+The included one-line [libvpl MinGW compatibility patch](https://github.com/intel/libvpl/pull/198)
+restricts legacy MSVC macros to MSVC; MinGW retains its bounded CRT functions.
+The patch accompanies the corresponding source and build recipe.
 
 Primary references: [FFmpeg download/signatures](https://ffmpeg.org/download.html),
 [FFmpeg license](https://ffmpeg.org/legal.html),
