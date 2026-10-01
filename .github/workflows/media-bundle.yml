@@ -1,0 +1,73 @@
+name: Media bundle
+on:
+  pull_request:
+    paths:
+      - build/**
+      - internal/bundle/**
+      - .github/workflows/media-bundle.yml
+permissions:
+  contents: read
+jobs:
+  build:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install macOS build prerequisites
+        if: runner.os == 'macOS'
+        run: brew install pkgconf nasm gnupg
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: >-
+            make tar curl gnupg diffutils
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-pkgconf
+      - name: Build and verify macOS bundle
+        if: runner.os == 'macOS'
+        run: |
+          bash build/ffmpeg.sh "$RUNNER_TEMP/media-bundle"
+          otool -L "$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffmpeg"
+          otool -L "$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffprobe"
+          for tool in ffmpeg ffprobe; do
+            if otool -L "$RUNNER_TEMP/media-bundle/bundle/ffmpeg/$tool" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)'; then
+              echo 'Unexpected non-system dependency' >&2
+              exit 1
+            fi
+          done
+          HHC_TEST_FFMPEG="$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffmpeg" \
+          HHC_TEST_FFPROBE="$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffprobe" \
+          HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media ./internal/cli -count=1
+      - name: Build and verify Windows bundle
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          media_build="$(cygpath -u "$RUNNER_TEMP")/media-bundle"
+          bash build/ffmpeg.sh "$media_build"
+          for tool in ffmpeg ffprobe; do
+            objdump -p "$media_build/bundle/ffmpeg/$tool.exe" | grep 'DLL Name:'
+            if objdump -p "$media_build/bundle/ffmpeg/$tool.exe" | grep -Ei 'DLL Name:.*(libgcc|libstdc|libwinpthread|libx264|avcodec|avformat)'; then
+              echo 'Unexpected separately installed runtime dependency' >&2
+              exit 1
+            fi
+          done
+          HHC_TEST_FFMPEG="$(cygpath -m "$media_build/bundle/ffmpeg/ffmpeg.exe")" \
+          HHC_TEST_FFPROBE="$(cygpath -m "$media_build/bundle/ffmpeg/ffprobe.exe")" \
+          HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media ./internal/cli -count=1
+      - name: Retain verified bundle with corresponding sources
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: media-bundle-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/media-bundle/bundle
+          if-no-files-found: error
+          retention-days: 7
