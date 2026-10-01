@@ -96,7 +96,7 @@ Only when requested:
 No recording operation ID or login is required. A check only reports
 `data.available`; it does not install. Installation requires exit 0, `ok=true`,
 and `data.installed=true`. A busy updater must wait for active work and retry
-its own command once, not `recordings resume`. After success, read `hhc version
+its own command once, not `recordings resume`. After successful installation, read `hhc version
 --json` and the installed version's skill. Preserve any agent-owned skill copy.
 `managed_install_required` means portable mode: follow the published installation
 instructions rather than overwriting the running executable. A development build
