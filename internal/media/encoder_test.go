@@ -45,6 +45,54 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 	}
 }
 
+func TestFractionalFrameRateMinuteBoundaryDoesNotInventATailSegment(t *testing.T) {
+	ffmpeg, ffprobe := os.Getenv("HHC_TEST_FFMPEG"), os.Getenv("HHC_TEST_FFPROBE")
+	if ffmpeg == "" || ffprobe == "" {
+		if os.Getenv("HHC_REQUIRE_MEDIA_TESTS") == "1" {
+			t.Fatal("media tools required")
+		}
+		t.Skip("media tools unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "minute.mp4")
+	output := filepath.Join(dir, "720p")
+	if err := os.Mkdir(output, 0700); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=640x360:r=30000/1001", "-f", "lavfi", "-i", "sine=sample_rate=48000", "-t", "60", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", source}
+	if out, err := exec.CommandContext(ctx, ffmpeg, args...).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v %s", err, out)
+	}
+	info, err := ProbeSource(ctx, ffprobe, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanSource(info, DefaultEncodeOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err = CPUEncodeArguments(source, output, plan.Renditions[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operation.RunTool(ctx, ffmpeg, args, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	measured, err := MeasureRendition(ctx, ffprobe, output, plan.Renditions[0])
+	if err != nil {
+		t.Fatalf("normal fractional-rate tail rejected (source duration %.6f expected segments %d): %v", info.DurationSeconds, plan.Renditions[0].SegmentCount, err)
+	}
+	if measured.Rendition.SegmentCount != len(measured.SegmentBytes) {
+		t.Fatal("inventory count differs from actual output")
+	}
+	t.Logf("source duration=%.6f segments=%d measured duration=%.6f segments=%d", info.DurationSeconds, plan.Renditions[0].SegmentCount, measured.Rendition.DurationSeconds, len(measured.SegmentBytes))
+	if _, err := BuildMasterPlaylist([]RenditionMedia{measured}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testCPUEncodeAligned(t *testing.T, fps int) {
 	ffmpeg, ffprobe := os.Getenv("HHC_TEST_FFMPEG"), os.Getenv("HHC_TEST_FFPROBE")
 	if ffmpeg == "" || ffprobe == "" {
