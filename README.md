@@ -2,7 +2,8 @@
 
 Recording preparation and authenticated publishing for HHC.
 
-Implementation is in progress. This producer checkpoint contains the versioned
+Production activation and device acceptance are tracked separately from builds.
+The implementation contains the versioned
 HLS inventory/digest contract, independent source/package budgets and source
 rendition planning, bounded ffprobe metadata parsing and the fixed CPU encode
 arguments, measured-bandwidth master playlist builder and bounded streaming
@@ -40,7 +41,7 @@ The development executable now supports `version` and `auth login/status/logout`
 including noninteractive service login through `--secret-stdin`, hidden terminal
 input, safe JSON results and exit codes. Profiles bind renewal to the issuer's
 principal, client and credential IDs. JSON human login never opens a browser.
-This is not yet a usable unattended recording uploader.
+Recording upload requires the deployed HLS and service-principal API contracts.
 `recordings get ID` queries the authenticated CMS recording projection, with
 one bounded same-principal renewal on 401 and no redirect or response-body echo.
 It reports metadata only; a successful query does not establish HLS readiness.
@@ -66,8 +67,8 @@ The CPU preparation pipeline now holds a native stable source, preflights disk
 space, monitors generated-byte/free-space budgets, measures actual fragments and
 atomically finalizes a new package without overwriting existing output. Local
 tests verify source preservation and snapshot/scratch cleanup. Native CI now also
-runs actual CPU media fixtures on Windows and macOS; these are not release bundles.
-`recordings upload FILE --prepare` now connects the fixed CPU pipeline to the
+runs actual CPU media fixtures on Windows and macOS.
+`recordings upload FILE --prepare` connects automatic hardware/CPU preparation to the
 same upload operation, verifies the embedded tool manifest before execution,
 and pins the stable source fingerprint before encoding. Its private generated
 tree is removed only after remote ready, including when publication then fails.
@@ -89,19 +90,18 @@ Tests set it to a private temporary directory so maintenance cannot sweep real
 user operations. Keep it unchanged when resuming an operation.
 The native command fixture builds a real CLI with embedded fixture-tool hashes,
 then exercises prepare and resume without changing its Chinese-path source.
-The distributed FFmpeg builds, automatic hardware qualification,
-and final signed release integration are still being implemented;
-these development commands are not a released end-to-end uploader.
+Native CI also builds bundled FFmpeg and round-trips application archives on
+both supported platforms. Public releases are produced only by the merged-tag
+workflow below; CI artifacts alone are not production acceptance.
 Inventory assembly rejects missing/extra files, symlinks and size violations;
-it does not establish encoded-media readiness. It does not yet ship a release,
-verified FFmpeg bundle or complete preparation/upload workflow.
+it does not establish server-side encoded-media readiness.
 
-## Managed installation and explicit updates (development)
+## Managed installation and explicit updates
 
 The implementation now supports `hhc install --directory ABSOLUTE_NEW_DIRECTORY`
 and `hhc update [--check]`, with `--json --no-input` for automation. Neither needs
-an account login. Signed application release artifacts and their trust key are
-not provisioned yet; development builds fail closed with
+an account login. Release builds embed the public trust key; unconfigured
+development builds fail closed with
 `release_trust_unavailable` instead of downloading unsigned code.
 
 From a verified release, choose a new user-writable directory whose parent exists
@@ -168,7 +168,7 @@ Maintainers must provision the repository variable `HHC_RELEASE_PUBLIC_KEY`
 Only the publish job receives the private key. The signer verifies the pair,
 signs exact `release.json` bytes and creates `SHA256SUMS`; GitHub publication
 never replaces existing assets. Missing keys stop release, without unsigned
-fallback. No release tag or signing credentials have been provisioned yet.
+fallback. Provisioning credentials is not itself evidence of a published release.
 
 The first downloaded CLI must come from the trusted repository release; the
 embedded-key update mechanism does not independently establish initial trust.
