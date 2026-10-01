@@ -23,6 +23,7 @@ type UploadResult struct {
 	PackageDigest            string                   `json:"packageDigest,omitempty"`
 	SizeBytes                int64                    `json:"sizeBytes"`
 	SourceFingerprint        *media.SourceFingerprint `json:"sourceFingerprint"`
+	Encoding                 *media.EncodingSummary   `json:"encoding,omitempty"`
 	PrepareState             string                   `json:"prepareState"`
 	TransferState            string                   `json:"transferState"`
 	ValidationState          string                   `json:"validationState"`
@@ -95,6 +96,7 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 		return result, err
 	}
 	state = j.State()
+	result.Encoding = state.Encoding
 	inv, err := media.ReadPackage(ctx, input)
 	if err != nil {
 		return result, err
@@ -245,6 +247,7 @@ func finishReady(ctx context.Context, c *api.Client, j *Journal, result UploadRe
 		}
 	}()
 	result.TransferState, result.ValidationState = "complete", "ready"
+	result.Encoding = j.state.Encoding
 	if j.state.Intent.Prepare {
 		result.PrepareState = "complete"
 		if err := j.cleanGenerated(); err != nil {

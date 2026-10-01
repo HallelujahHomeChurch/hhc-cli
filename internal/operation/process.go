@@ -32,37 +32,47 @@ func (e *ProcessFailure) Unwrap() error { return ErrProcessFailed }
 // and terminates its descendants on cancellation. Bundle verification belongs
 // to the caller; this function never searches PATH or downloads a binary.
 func RunTool(ctx context.Context, binary string, args []string, outputLimit int) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if !filepath.IsAbs(binary) || !utf8.ValidString(binary) || strings.ContainsRune(binary, 0) || outputLimit < 1 || outputLimit > 1<<20 {
+	if outputLimit < 1 || outputLimit > 1<<20 {
 		return nil, os.ErrInvalid
-	}
-	for _, arg := range args {
-		if !utf8.ValidString(arg) || strings.ContainsRune(arg, 0) {
-			return nil, os.ErrInvalid
-		}
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	output := boundedProcessOutput{remaining: outputLimit, cancel: cancel}
-	err := runTool(ctx, binary, args, &output)
+	if err := runToolOutput(ctx, binary, args, &output); err != nil {
+		return nil, err
+	}
+	return output.buffer.Bytes(), nil
+}
+
+func runToolOutput(ctx context.Context, binary string, args []string, output io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(binary) || !utf8.ValidString(binary) || strings.ContainsRune(binary, 0) {
+		return os.ErrInvalid
+	}
+	for _, arg := range args {
+		if !utf8.ValidString(arg) || strings.ContainsRune(arg, 0) {
+			return os.ErrInvalid
+		}
+	}
+	err := runTool(ctx, binary, args, output)
 	if cause := context.Cause(ctx); cause != nil {
-		return nil, cause
+		return cause
 	}
 	if err != nil {
 		var failure *ProcessFailure
 		if errors.As(err, &failure) {
-			return nil, failure
+			return failure
 		}
 		code := -1
 		var exited interface{ ExitCode() int }
 		if errors.As(err, &exited) {
 			code = exited.ExitCode()
 		}
-		return nil, &ProcessFailure{Stage: "tool", ExitCode: code}
+		return &ProcessFailure{Stage: "tool", ExitCode: code}
 	}
-	return output.buffer.Bytes(), nil
+	return nil
 }
 
 type boundedProcessOutput struct {

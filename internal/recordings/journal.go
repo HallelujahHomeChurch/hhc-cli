@@ -49,6 +49,7 @@ type JournalState struct {
 	Intent                 Intent                  `json:"intent"`
 	UpdatedAt              time.Time               `json:"updatedAt"`
 	SourceFingerprint      media.SourceFingerprint `json:"sourceFingerprint"`
+	Encoding               *media.EncodingSummary  `json:"encoding,omitempty"`
 	PackageDigest          string                  `json:"packageDigest"`
 	RecordingID            string                  `json:"recordingId"`
 	PackageID              string                  `json:"packageId"`
@@ -64,6 +65,8 @@ type JournalState struct {
 // orchestrator serializes saves. Remote IDs are hints: resume queries the server
 // again and never treats this local file as proof of readiness or publication.
 type Journal struct {
+	// Progress is ephemeral numeric diagnostics, never evidence of remote readiness.
+	Progress  func(media.EncodingProgress)
 	root      *os.Root
 	lock      *os.File
 	directory string
@@ -167,6 +170,9 @@ func (j *Journal) Save(next JournalState) error {
 	if j.state.GeneratedOwned && !next.GeneratedOwned || j.state.PackageBytes != 0 && next.PackageBytes != j.state.PackageBytes {
 		return ErrOperationConflict
 	}
+	if j.state.Encoding != nil && (next.Encoding == nil || *j.state.Encoding != *next.Encoding) {
+		return ErrOperationConflict
+	}
 	if !j.state.SessionExpiresAt.IsZero() && (next.SessionExpiresAt.IsZero() || next.SessionExpiresAt.After(j.state.SessionExpiresAt)) {
 		return ErrOperationConflict
 	}
@@ -237,6 +243,22 @@ func validIntent(v Intent) bool {
 }
 
 func validState(v JournalState) bool {
+	if v.Encoding != nil {
+		preset := v.Encoding.ActualEncoder + "-hq-v1"
+		switch v.Encoding.ActualEncoder {
+		case "libx264":
+			preset = "cpu-hq-v1"
+		case "h264_videotoolbox", "h264_nvenc", "h264_qsv", "h264_amf":
+			if v.Encoding.CPUFallback {
+				return false
+			}
+		default:
+			return false
+		}
+		if v.Encoding.PresetVersion != preset {
+			return false
+		}
+	}
 	if v.SchemaVersion != 1 || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 || v.PackageBytes < 0 || v.PackageBytes > media.RecordingPackageMaxBytes || v.GeneratedOwned && v.Intent.Command != "prepare" && (v.Intent.Command != "upload" || !v.Intent.Prepare) {
 		return false
 	}

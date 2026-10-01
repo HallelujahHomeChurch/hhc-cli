@@ -7,10 +7,33 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 )
 
 const journalFixtureID = "00000000-0000-4000-8000-000000000031"
+
+func TestJournalPinsValidatedEncodingSummary(t *testing.T) {
+	intent := journalIntent(t)
+	j, err := OpenJournal(t.TempDir(), journalFixtureID, &intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	state := j.State()
+	state.Encoding = &media.EncodingSummary{ActualEncoder: "untrusted arbitrary output", PresetVersion: "cpu-hq-v1"}
+	if err := j.Save(state); err == nil {
+		t.Fatal("accepted unvalidated encoding diagnostics")
+	}
+	state.Encoding = &media.EncodingSummary{ActualEncoder: "libx264", PresetVersion: "cpu-hq-v1", CPUFallback: true}
+	if err := j.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	state.Encoding = nil
+	if err := j.Save(state); err == nil {
+		t.Fatal("lost completed encoder evidence")
+	}
+}
 
 func journalIntent(t *testing.T) Intent {
 	return Intent{Command: "upload", Profile: "uploader", PrincipalType: "service", PrincipalID: "00000000-0000-4000-8000-000000000011", ClientID: "client", Input: filepath.Join(t.TempDir(), "recording.mkv"), Title: "主日聚會", Prepare: true, Publish: true, VideoBitrate720: 1500000, VideoBitrate1080: 3000000}

@@ -136,6 +136,22 @@ The approved target is Windows amd64 and macOS arm64, bundled FFmpeg, local HLS
 preparation, human/service login, resumable direct upload, explicit publication
 and signed manual updates. Original recordings are never deleted by the CLI.
 
+Preparation now probes actual target-setting encodes before selecting hardware:
+VideoToolbox on macOS, or NVENC, QSV, then AMF on Windows. Unsupported devices,
+drivers, or settings fall back to libx264 medium. A running hardware encode may
+restart on CPU once only after an independent synthetic probe also fails;
+source corruption, cancellation, disk pressure, and cleanup failures do not
+trigger this restart. The operation deadline never resets. Both renditions are
+regenerated together, never mixed across encoders. VideoToolbox disables B-frame
+reordering to meet the same strict fMP4 timing validation as the server.
+
+Progress goes to stderr (numeric JSON events with `--json`); stdout remains one
+final result. Progress may be dropped when its consumer is slow and is never
+evidence of upload, validation or publication. Completed encoding metadata is
+retained in the operation journal. macOS hardware preparation has been tested
+with the native CI-built FFmpeg bundle; Windows GPU presence/driver behavior and
+real congregation-recording quality still require device acceptance.
+
 ## Maintainer release workflow
 
 `Release` accepts stable `vMAJOR.MINOR.PATCH` tags only when their commit is

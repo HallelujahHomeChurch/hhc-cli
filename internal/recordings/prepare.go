@@ -39,8 +39,9 @@ func preparedInput(ctx context.Context, j *Journal) (string, error) {
 		return "", err
 	}
 	options := media.DefaultEncodeOptions()
+	options.Progress = j.Progress
 	options.VideoBitrate720, options.VideoBitrate1080 = j.state.Intent.VideoBitrate720, j.state.Intent.VideoBitrate1080
-	_, err = media.PrepareCPU(ctx, j.state.Intent.Input, output, tools.FFmpeg, tools.FFprobe, options, func(f media.SourceFingerprint) error {
+	prepared, err := media.PrepareAuto(ctx, j.state.Intent.Input, output, tools.FFmpeg, tools.FFprobe, options, func(f media.SourceFingerprint) error {
 		state := j.State()
 		state.SourceFingerprint = f
 		return j.Save(state)
@@ -49,6 +50,11 @@ func preparedInput(ctx context.Context, j *Journal) (string, error) {
 		if cleanupErr := j.cleanGenerated(); cleanupErr != nil {
 			err = errors.Join(err, media.ErrLocalCleanup)
 		}
+		return "", err
+	}
+	state := j.State()
+	state.Encoding = &prepared.EncodingSummary
+	if err := j.Save(state); err != nil {
 		return "", err
 	}
 	return output, nil

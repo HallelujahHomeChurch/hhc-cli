@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -105,7 +107,10 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 		{"recordings", "prepare", source, "--output", output, "--operation-id", id, "--json", "--no-input"},
 		{"recordings", "resume", id, "--json", "--no-input"},
 	} {
-		out, err := exec.CommandContext(ctx, binary, args...).CombinedOutput()
+		cmd := exec.CommandContext(ctx, binary, args...)
+		var diagnostics bytes.Buffer
+		cmd.Stderr = &diagnostics
+		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("command: %v %s", err, out)
 		}
@@ -120,6 +125,15 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 		}
 		if json.Unmarshal(out, &value) != nil || !value.OK || value.Profile != nil || value.Principal != nil || !value.Data.RequestedActionSatisfied || value.Data.PrepareState != "complete" || value.Data.LocalCleanupState != "complete" {
 			t.Fatalf("command result: %s", out)
+		}
+		if args[1] == "prepare" {
+			var progress struct {
+				Type, OperationID, Encoder, Rendition string
+				Fraction                              float64
+			}
+			if json.NewDecoder(&diagnostics).Decode(&progress) != nil || progress.Type != "encoding_progress" || progress.OperationID != id || !slices.Contains([]string{"libx264", "h264_videotoolbox", "h264_nvenc", "h264_qsv", "h264_amf"}, progress.Encoder) || progress.Rendition != "720p" || progress.Fraction < 0 || progress.Fraction > 1 {
+				t.Fatal("missing separate structured stderr progress")
+			}
 		}
 	}
 	after, err := os.ReadFile(source)

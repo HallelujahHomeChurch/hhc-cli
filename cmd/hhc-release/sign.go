@@ -15,7 +15,7 @@ import (
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/update"
 )
 
-const mediaBundleVersion = "ffmpeg-8.1.3-x264-b35605a-hhc1"
+const mediaBundleVersion = "ffmpeg-8.1.3-x264-b35605a-hhc2"
 
 func signRelease(directory, version, encodedSeed, publicKey string) error {
 	seed, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encodedSeed))

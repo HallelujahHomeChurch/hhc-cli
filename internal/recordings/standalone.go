@@ -17,6 +17,7 @@ type PreparationResult struct {
 	PackageDigest            string                  `json:"packageDigest"`
 	SizeBytes                int64                   `json:"sizeBytes"`
 	SourceFingerprint        media.SourceFingerprint `json:"sourceFingerprint"`
+	Encoding                 *media.EncodingSummary  `json:"encoding,omitempty"`
 	PrepareState             string                  `json:"prepareState"`
 	LocalCleanupState        string                  `json:"localCleanupState"`
 	RequestedActionSatisfied bool                    `json:"requestedActionSatisfied"`
@@ -65,8 +66,9 @@ func Prepare(ctx context.Context, j *Journal) (value PreparationResult, err erro
 				return value, err
 			}
 			options := media.DefaultEncodeOptions()
+			options.Progress = j.Progress
 			options.VideoBitrate720, options.VideoBitrate1080 = state.Intent.VideoBitrate720, state.Intent.VideoBitrate1080
-			_, err = media.PrepareCPU(ctx, state.Intent.Input, staging, tools.FFmpeg, tools.FFprobe, options, func(f media.SourceFingerprint) error {
+			prepared, err := media.PrepareAuto(ctx, state.Intent.Input, staging, tools.FFmpeg, tools.FFprobe, options, func(f media.SourceFingerprint) error {
 				next := j.State()
 				next.SourceFingerprint = f
 				return j.Save(next)
@@ -75,6 +77,11 @@ func Prepare(ctx context.Context, j *Journal) (value PreparationResult, err erro
 				if cleanupErr := j.cleanGenerated(); cleanupErr != nil {
 					err = errors.Join(err, media.ErrLocalCleanup)
 				}
+				return value, err
+			}
+			next := j.State()
+			next.Encoding = &prepared.EncodingSummary
+			if err := j.Save(next); err != nil {
 				return value, err
 			}
 		} else if statErr != nil {
@@ -99,6 +106,7 @@ func Prepare(ctx context.Context, j *Journal) (value PreparationResult, err erro
 	}
 	state = j.State()
 	value.PackageDigest, value.SizeBytes, value.SourceFingerprint = state.PackageDigest, state.PackageBytes, state.SourceFingerprint
+	value.Encoding = state.Encoding
 	value.PrepareState = "complete"
 	if err := j.cleanGenerated(); err != nil {
 		value.LocalCleanupState = "failed"

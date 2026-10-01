@@ -20,9 +20,9 @@ case "$(uname -s)" in
   MINGW*|MSYS*)
     test "$(uname -m)" = x86_64
     media_suffix='.exe'
-    media_cflags=''
+    media_cflags="-I$media_build/prefix/include"
     media_ldflags='-static'
-    media_platform=(--target-os=mingw32 --arch=x86_64 --enable-w32threads --disable-pthreads)
+    media_platform=(--target-os=mingw32 --arch=x86_64 --enable-w32threads --disable-pthreads --enable-ffnvcodec --enable-nvenc --enable-amf --enable-libvpl)
     ;;
   *) echo 'supported builders: macOS arm64 or Windows MSYS2 x64' >&2; exit 2;;
 esac
@@ -51,6 +51,31 @@ fetch sources/x264.tar.bz2 https://code.videolan.org/videolan/x264/-/archive/b35
 verify_hash 6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224 sources/x264.tar.bz2
 tar -xf sources/ffmpeg.tar.xz
 tar -xf sources/x264.tar.bz2
+
+if test "$media_suffix" = .exe; then
+  fetch sources/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n13.1.15.0/nv-codec-headers-13.1.15.0.tar.gz
+  verify_hash 52532ceade3d5c1af62624986f13cf01b63c910576b08c0c278756c5e4b41ad0 sources/nv-codec-headers.tar.gz
+  fetch sources/amf-headers.tar.gz https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v1.5.3/AMF-headers-v1.5.3.tar.gz
+  verify_hash 570c8f6593b8c24a6e47a0a9c59b216a7198138e660ba4011590ae913343d5c3 sources/amf-headers.tar.gz
+  fetch sources/libvpl.tar.gz https://codeload.github.com/intel/libvpl/tar.gz/refs/tags/v2.17.0
+  verify_hash 4de3e2faf1e8307fb282e4a43f443191810f6a6b0a484fffa7995ba1c814c6ec sources/libvpl.tar.gz
+  tar -xf sources/nv-codec-headers.tar.gz
+  tar -xf sources/amf-headers.tar.gz
+  tar -xf sources/libvpl.tar.gz
+  make -C nv-codec-headers-13.1.15.0 PREFIX="$media_build/prefix" install
+  cp -R amf-headers-v1.5.3/AMF "$media_build/prefix/include/"
+  cmake -G Ninja -S libvpl-2.17.0 -B vpl-build \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$media_build/prefix" \
+    -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF \
+    -DBUILD_EXAMPLES=OFF -DINSTALL_EXAMPLES=OFF -DBUILD_EXPERIMENTAL=OFF
+  cmake --build vpl-build --parallel 3
+  cmake --install vpl-build
+  cp sources/nv-codec-headers.tar.gz sources/amf-headers.tar.gz sources/libvpl.tar.gz bundle/source/
+  cp nv-codec-headers-13.1.15.0/include/ffnvcodec/nvEncodeAPI.h bundle/licenses/NVIDIA-header-notice.h
+  cp amf-headers-v1.5.3/AMF/core/Version.h bundle/licenses/AMF-header-notice.h
+  cp libvpl-2.17.0/LICENSE bundle/licenses/libvpl-LICENSE.txt
+  cp libvpl-2.17.0/third-party-programs.txt bundle/licenses/libvpl-third-party-programs.txt
+fi
 
 cd x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55
 ./configure --prefix="$media_build/prefix" --enable-static --enable-pic --disable-cli --disable-opencl --bit-depth=8 --extra-cflags="$media_cflags" --extra-ldflags="$media_ldflags"

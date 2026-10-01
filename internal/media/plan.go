@@ -19,6 +19,14 @@ type EncodeOptions struct {
 	VideoBitrate720, VideoBitrate1080 int64
 	SegmentSeconds                    int
 	Encoder                           string
+	Progress                          func(EncodingProgress)
+}
+
+type EncodingProgress struct {
+	Rendition string  `json:"rendition"`
+	Encoder   string  `json:"encoder"`
+	Fraction  float64 `json:"fraction"`
+	Speed     float64 `json:"speed"`
 }
 
 func DefaultEncodeOptions() EncodeOptions {

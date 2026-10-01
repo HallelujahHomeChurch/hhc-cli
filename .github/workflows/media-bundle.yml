@@ -42,6 +42,7 @@ jobs:
             make tar curl gnupg diffutils
             mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
             mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
       - name: Build and verify macOS bundle
         if: runner.os == 'macOS'
         run: |
@@ -63,6 +64,12 @@ jobs:
         run: |
           media_build="$(cygpath -u "$RUNNER_TEMP")/media-bundle"
           bash build/ffmpeg.sh "$media_build"
+          # Available backends are not proof of a working GPU/driver. Runtime
+          # selection still requires actual target-setting probe encodes.
+          "$media_build/bundle/ffmpeg/ffmpeg.exe" -hide_banner -encoders > "$media_build/encoders.txt"
+          for encoder in h264_nvenc h264_qsv h264_amf; do
+            grep -w "$encoder" "$media_build/encoders.txt"
+          done
           for tool in ffmpeg ffprobe; do
             objdump -p "$media_build/bundle/ffmpeg/$tool.exe" | grep 'DLL Name:'
             if objdump -p "$media_build/bundle/ffmpeg/$tool.exe" | grep -Ei 'DLL Name:.*(libgcc|libstdc|libwinpthread|libx264|avcodec|avformat)'; then

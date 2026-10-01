@@ -50,9 +50,15 @@ func TestPrepareCPUPreservesSourceAndAtomicallyCreatesPackage(t *testing.T) {
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatal("output created before source checkpoint")
 	}
-	value, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, DefaultEncodeOptions(), nil)
+	options := DefaultEncodeOptions()
+	progress := make(map[string]float64)
+	options.Progress = func(p EncodingProgress) { progress[p.Rendition] = p.Fraction }
+	value, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, options, nil)
 	if err != nil || len(value.Inventory.Renditions) != 2 || value.SourceFingerprint.SHA256 != fmt.Sprintf("%x", hash) || value.ActualEncoder != "libx264" {
 		t.Fatalf("prepare: %+v %v", value, err)
+	}
+	if progress["720p"] < .99 || progress["1080p"] < .99 {
+		t.Fatalf("did not stream both renditions' progress: %+v", progress)
 	}
 	verified, err := ReadPackage(ctx, output)
 	if err != nil || verified.InventoryDigest != value.Inventory.InventoryDigest {

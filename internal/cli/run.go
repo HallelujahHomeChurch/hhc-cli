@@ -292,6 +292,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		}
 		if journal.State().Intent.Command == "prepare" {
 			defer journal.Close()
+			journal.Progress = recordingProgress(diagnostics, jsonMode, operationID)
 			r.Profile = nil
 			if !jsonMode {
 				fmt.Fprintln(diagnostics, "Operation:", operationID)
@@ -348,6 +349,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 			return finish(err)
 		}
 		defer journal.Close()
+		journal.Progress = recordingProgress(diagnostics, jsonMode, operationID)
 		if journal.State().Intent.Profile != profile {
 			return finish(recordings.ErrOperationConflict)
 		}
