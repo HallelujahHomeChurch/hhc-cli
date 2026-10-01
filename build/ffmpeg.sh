@@ -28,7 +28,10 @@ case "$(uname -s)" in
 esac
 
 cd "$media_build"
-mkdir -m 700 gpg
+mkdir gpg
+# The keyring contains only the public release key. NTFS runner ACLs do not
+# support POSIX chmod here; retain their inherited permissions on Windows.
+if test "$(uname -s)" = Darwin; then chmod 700 gpg; fi
 mkdir sources prefix bundle
 mkdir bundle/ffmpeg bundle/licenses bundle/source
 fetch() { curl --fail --location --retry 2 --max-time 120 --proto '=https' --tlsv1.2 --output "$1" "$2"; }
