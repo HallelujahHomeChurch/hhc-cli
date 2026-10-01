@@ -47,7 +47,11 @@ type ServiceClient struct {
 }
 
 func NewServiceClient() *ServiceClient {
-	return &ServiceClient{http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, endpoint: serviceTokenEndpoint}
+	return &ServiceClient{http: newAuthHTTPClient(), endpoint: serviceTokenEndpoint}
+}
+
+func newAuthHTTPClient() *http.Client {
+	return &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 func recordingScopes(scopes []string) (string, error) {
@@ -111,31 +115,12 @@ func (c *ServiceClient) Exchange(ctx context.Context, clientID, secret string, s
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusBadRequest {
 		return Token{}, ErrAuthUnavailable
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 65537))
-	trimmed := bytes.TrimSpace(body)
-	if err != nil || len(body) > 65536 || !utf8.Valid(body) || len(trimmed) == 0 || trimmed[0] != '{' {
-		return Token{}, ErrInvalidAuthResponse
-	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		return Token{}, ErrInvalidAuthResponse
-	}
-	var wire struct {
-		AccessToken  string `json:"access_token"`
-		TokenType    string `json:"token_type"`
-		ExpiresIn    int64  `json:"expires_in"`
-		Scope        string `json:"scope"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		Error        string `json:"error"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if decoder.Decode(&wire) != nil {
-		return Token{}, ErrInvalidAuthResponse
-	}
-	var extra any
-	if decoder.Decode(&extra) != io.EOF {
-		return Token{}, ErrInvalidAuthResponse
+	wire, err := readOAuthResponse(response)
+	if err != nil {
+		if ctx.Err() != nil {
+			return Token{}, ctx.Err()
+		}
+		return Token{}, err
 	}
 	if response.StatusCode == http.StatusBadRequest {
 		if wire.Error == "invalid_scope" {
@@ -147,11 +132,7 @@ func (c *ServiceClient) Exchange(ctx context.Context, clientID, secret string, s
 	if err != nil || actual != scope || wire.Error != "" || wire.TokenType != "Bearer" || len(wire.AccessToken) > 16384 || !bearerPattern.MatchString(wire.AccessToken) || wire.ExpiresIn <= 0 || wire.ExpiresIn > 600 || wire.RefreshToken != "" || wire.IDToken != "" || len(response.Header.Values("Set-Cookie")) > 0 {
 		return Token{}, ErrInvalidAuthResponse
 	}
-	noStore := false
-	for directive := range strings.SplitSeq(response.Header.Get("Cache-Control"), ",") {
-		noStore = noStore || strings.EqualFold(strings.TrimSpace(directive), "no-store")
-	}
-	if !noStore {
+	if !oauthResponseNoStore(response) {
 		return Token{}, ErrInvalidAuthResponse
 	}
 	// Conservatively account for request latency and stop using the token before
@@ -161,4 +142,42 @@ func (c *ServiceClient) Exchange(ctx context.Context, clientID, secret string, s
 		return Token{}, ErrAuthenticationRequired
 	}
 	return Token{value: wire.AccessToken, expiresAt: expires, scope: actual}, nil
+}
+
+type oauthResponse struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int64  `json:"expires_in"`
+	Scope        string `json:"scope"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
+	Error        string `json:"error"`
+}
+
+func readOAuthResponse(response *http.Response) (oauthResponse, error) {
+	var wire oauthResponse
+	body, err := io.ReadAll(io.LimitReader(response.Body, 65537))
+	trimmed := bytes.TrimSpace(body)
+	mediaType, _, mimeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || len(body) > 65536 || !utf8.Valid(body) || len(trimmed) == 0 || trimmed[0] != '{' || mimeErr != nil || mediaType != "application/json" {
+		return wire, ErrInvalidAuthResponse
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if decoder.Decode(&wire) != nil {
+		return oauthResponse{}, ErrInvalidAuthResponse
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return oauthResponse{}, ErrInvalidAuthResponse
+	}
+	return wire, nil
+}
+
+func oauthResponseNoStore(response *http.Response) bool {
+	for directive := range strings.SplitSeq(response.Header.Get("Cache-Control"), ",") {
+		if strings.EqualFold(strings.TrimSpace(directive), "no-store") {
+			return true
+		}
+	}
+	return false
 }

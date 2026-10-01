@@ -40,6 +40,8 @@ jobs:
           go-version-file: go.mod
       - name: Test native source stability (not bundle or GPU acceptance)
         run: go test -race ./internal/operation -count=1
+      - name: Test native loopback authentication (not real browser or credential-store acceptance)
+        run: go test -race ./internal/auth -count=1
   verify:
     if: ${{ always() }}
     needs: [contracts, native-source]
