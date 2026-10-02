@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +18,30 @@ import (
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 )
+
+func TestInputOptionsKeepMOVReferencesDisabledWithoutBreakingMatroska(t *testing.T) {
+	for _, ext := range []string{".mp4", ".mov", ".mkv", ".MKV"} {
+		r := RecordingRendition{Name: "720p", Width: 1280, Height: 720, FrameRate: 30, VideoBitrate: 1500000, AudioBitrate: 128000, DurationSeconds: 35, SegmentCount: 2}
+		args, err := CPUEncodeArguments(filepath.Join(t.TempDir(), "source"+ext), filepath.Join(t.TempDir(), "720p"), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, value := range map[string]string{"-protocol_whitelist": "file", "-format_whitelist": "mov,matroska"} {
+			i := slices.Index(args, key)
+			if i < 0 || args[i+1] != value {
+				t.Fatalf("missing restriction %s", key)
+			}
+		}
+		i := slices.Index(args, "-enable_drefs")
+		if strings.EqualFold(ext, ".mkv") {
+			if i >= 0 {
+				t.Fatal("MOV-only option on Matroska")
+			}
+		} else if i < 0 || args[i+1] != "0" {
+			t.Fatal("MOV external references enabled")
+		}
+	}
+}
 
 func TestCPUEncodeRejectsNetworkInputAndInvalidRendition(t *testing.T) {
 	r := RecordingRendition{Name: "720p", Width: 1280, Height: 720, FrameRate: 30, VideoBitrate: 1500000, AudioBitrate: 128000, DurationSeconds: 65, SegmentCount: 3}

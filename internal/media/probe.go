@@ -37,10 +37,9 @@ func ProbeSource(ctx context.Context, ffprobe, source string) (SourceInfo, error
 	if err := ValidateRecordingSourceSize(before.Size()); err != nil {
 		return SourceInfo{}, err
 	}
-	data, err := operation.RunTool(ctx, ffprobe, []string{
-		"-v", "error", "-protocol_whitelist", "file", "-format_whitelist", "mov,matroska", "-enable_drefs", "0",
-		"-show_streams", "-show_format", "-of", "json", source,
-	}, 1<<20)
+	args := append([]string{"-v", "error"}, sourceInputOptions(source)...)
+	args = append(args, "-show_streams", "-show_format", "-of", "json", source)
+	data, err := operation.RunTool(ctx, ffprobe, args, 1<<20)
 	if err != nil {
 		return SourceInfo{}, err
 	}
@@ -49,6 +48,16 @@ func ProbeSource(ctx context.Context, ffprobe, source string) (SourceInfo, error
 		return SourceInfo{}, operation.ErrSourceChanged
 	}
 	return ParseSourceProbe(bytes.NewReader(data))
+}
+
+func sourceInputOptions(source string) []string {
+	args := []string{"-protocol_whitelist", "file", "-format_whitelist", "mov,matroska"}
+	// enable_drefs is a MOV demuxer option. ffprobe accepts it for Matroska,
+	// but ffmpeg rejects the unused input option before decoding any frames.
+	if !strings.EqualFold(filepath.Ext(source), ".mkv") {
+		args = append(args, "-enable_drefs", "0")
+	}
+	return args
 }
 
 // ParseSourceProbe accepts bounded local ffprobe metadata, not proof that a

@@ -220,6 +220,7 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 			return value, probeErr
 		}
 		if !fallback {
+			stage = "encode_renditions"
 			return value, err
 		}
 		for _, r := range plan.Renditions {

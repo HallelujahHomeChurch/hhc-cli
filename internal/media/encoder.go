@@ -52,11 +52,13 @@ func encodeArguments(source, output string, rendition RecordingRendition, encode
 	}
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-n",
-		"-protocol_whitelist", "file", "-format_whitelist", "mov,matroska", "-enable_drefs", "0",
+	}
+	args = append(args, sourceInputOptions(source)...)
+	args = append(args, []string{
 		"-noautorotate", "-threads", "2", "-i", filepath.ToSlash(source),
 		"-map", "0:V:0", "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
 		"-filter_threads", "2", "-vf", "scale=" + strconv.Itoa(rendition.Width) + ":" + strconv.Itoa(rendition.Height) + ":flags=lanczos,setsar=1",
-	}
+	}...)
 	args = append(args, codec...)
 	args = append(args, []string{
 		"-b:v", i(rendition.VideoBitrate), "-maxrate", i(maxrate), "-bufsize", i(2 * maxrate),
