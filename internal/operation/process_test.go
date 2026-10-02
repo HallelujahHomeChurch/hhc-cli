@@ -57,6 +57,17 @@ func TestRunToolFailureReportsExitCodeWithoutRawDiagnostics(t *testing.T) {
 	}
 }
 
+func TestRunToolMissingWindowsExecutablePreservesSystemCode(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows CreateProcess diagnostics")
+	}
+	_, err := RunTool(context.Background(), filepath.Join(t.TempDir(), "sensitive-fixture.exe"), nil, 1024)
+	var failure *ProcessFailure
+	if !errors.As(err, &failure) || failure.Stage != "create_process" || failure.SystemCode != 2 || strings.Contains(err.Error(), "sensitive-fixture") {
+		t.Fatalf("safe native error: %v", err)
+	}
+}
+
 func TestRunToolCancellationTerminatesDescendants(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		t.Skip("supported native OS required")

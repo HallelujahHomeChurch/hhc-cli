@@ -127,7 +127,7 @@ func Execute(ctx context.Context, current string, checkOnly bool) (value Result,
 	if err != nil {
 		return value, err
 	}
-	defer func() { err = errors.Join(err, os.RemoveAll(temp)) }()
+	defer func() { err = errors.Join(err, cleanupDownload(temp)) }()
 	archive := filepath.Join(temp, "release.archive")
 	if err = downloadArtifact(ctx, client, artifact, archive); err != nil {
 		return value, err
