@@ -22,6 +22,8 @@ func TestSafeNativeFailureClassification(t *testing.T) {
 		{&media.PreparationFailure{Stage: "source_checkpoint", Cause: &os.PathError{Op: "open", Path: "sensitive-fixture", Err: syscall.Errno(5)}}, "preparation_failed", "os=5"},
 		{&media.PreparationFailure{Stage: "encode_renditions", Cause: context.DeadlineExceeded}, "timeout", "階段 encode_renditions"},
 		{&media.PreparationFailure{Stage: "encoder_qualification", Cause: media.ErrLocalCleanup}, "local_cleanup_failed", "階段 encoder_qualification"},
+		{errors.Join(&media.PreparationFailure{Stage: "source_probe", Cause: &operation.ProcessFailure{Stage: "tool", ExitCode: 7}}, nil), "media_process_failed", "階段 source_probe"},
+		{errors.Join(&media.PreparationFailure{Stage: "source_probe", Cause: &operation.ProcessFailure{Stage: "tool", ExitCode: 7}}, media.ErrLocalCleanup), "local_cleanup_failed", "階段 source_probe"},
 		{errors.Join(&operation.ProcessFailure{Stage: "tool", ExitCode: 7}, media.ErrLocalCleanup), "local_cleanup_failed", "暫存清理"},
 		{&update.CleanupFailure{SystemCode: 32}, "update_cleanup_failed", "data.installed"},
 	} {
