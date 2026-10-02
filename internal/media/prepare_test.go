@@ -12,7 +12,32 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 )
+
+func TestPrepareFailureRetainsCheckpointAndProbeStage(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("native stable source")
+	}
+	parent := t.TempDir()
+	source := filepath.Join(parent, "source.mp4")
+	if err := os.WriteFile(source, []byte("read-only source fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := false
+	_, err := PrepareCPU(context.Background(), source, filepath.Join(parent, "output"), filepath.Join(parent, "ffmpeg"), filepath.Join(parent, "missing-probe"), DefaultEncodeOptions(), func(f SourceFingerprint) error {
+		checkpoint = f.SHA256 != ""
+		return nil
+	})
+	var failure *PreparationFailure
+	if !checkpoint || !errors.As(err, &failure) || failure.Stage != "source_probe" || !errors.Is(err, operation.ErrProcessFailed) {
+		t.Fatalf("checkpoint/probe diagnostics: %v %v", checkpoint, err)
+	}
+	if data, err := os.ReadFile(source); err != nil || string(data) != "read-only source fixture" {
+		t.Fatal("source changed")
+	}
+}
 
 func TestPrepareCPUPreservesSourceAndAtomicallyCreatesPackage(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {

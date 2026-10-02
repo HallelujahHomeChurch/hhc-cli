@@ -16,6 +16,15 @@ import (
 var ErrInsufficientDisk = errors.New("insufficient_disk_space")
 var ErrLocalCleanup = errors.New("local_cleanup_failed")
 
+// Stage is set only by the pipeline, never from source metadata or tool stderr.
+type PreparationFailure struct {
+	Stage string
+	Cause error
+}
+
+func (e *PreparationFailure) Error() string { return "preparation_failed (" + e.Stage + ")" }
+func (e *PreparationFailure) Unwrap() error { return e.Cause }
+
 type PreparedPackage struct {
 	Inventory         RecordingPackageInventory `json:"inventory"`
 	SourceFingerprint SourceFingerprint         `json:"sourceFingerprint"`
@@ -43,6 +52,12 @@ func PrepareAuto(ctx context.Context, source, output, ffmpeg, ffprobe string, op
 }
 
 func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, options EncodeOptions, checkpoint func(SourceFingerprint) error, auto bool) (value PreparedPackage, err error) {
+	stage := "source_preflight"
+	defer func() {
+		if err != nil {
+			err = &PreparationFailure{Stage: stage, Cause: err}
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return value, err
 	}
@@ -84,6 +99,7 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 		return value, err
 	}
 	defer stable.Close()
+	stage = "source_fingerprint"
 	value.SourceFingerprint, err = FingerprintSource(ctx, stable)
 	if err != nil {
 		return value, err
@@ -91,14 +107,17 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 	// Persist identity before encoding. A resumed operation must not silently
 	// upload a different recording after its original source was changed.
 	if checkpoint != nil {
+		stage = "source_checkpoint"
 		if err := checkpoint(value.SourceFingerprint); err != nil {
 			return value, err
 		}
 	}
+	stage = "source_probe"
 	metadata, err := ProbeSource(ctx, ffprobe, stable.Name())
 	if err != nil {
 		return value, err
 	}
+	stage = "source_plan"
 	plan, err := PlanSource(metadata, options)
 	if err != nil {
 		return value, err
@@ -107,6 +126,7 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 	if runtime.GOOS == "darwin" {
 		reserve += uint64(info.Size())
 	} // Worst-case CoW divergence; do not count a clone as permanently free.
+	stage = "disk_preflight"
 	available, err = operation.AvailableBytes(parent)
 	if err != nil {
 		return value, err
@@ -164,6 +184,7 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 	defer stopMonitor()
 	encoder := "libx264"
 	if auto {
+		stage = "encoder_qualification"
 		encoder, err = selectEncoder(workCtx, runtime.GOOS, func(name string) error {
 			return qualifyEncoder(workCtx, ffmpeg, ffprobe, parent, plan.Renditions, name)
 		})
@@ -173,6 +194,7 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 	}
 	var measured []RenditionMedia
 	for attempt := 0; attempt < 2; attempt++ {
+		stage = "encode_renditions"
 		measured, err = encodeRenditions(workCtx, stable.Name(), staging, ffmpeg, ffprobe, plan.Renditions, encoder, options.Progress)
 		if err == nil {
 			break
@@ -190,6 +212,7 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 		if free < 256<<20 {
 			return value, ErrInsufficientDisk
 		}
+		stage = "encoder_recheck"
 		fallback, probeErr := hardwareStopped(workCtx, err, func() error {
 			return qualifyEncoder(workCtx, ffmpeg, ffprobe, parent, plan.Renditions, encoder)
 		})
@@ -206,6 +229,7 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 		}
 		encoder, value.CPUFallback = "libx264", true
 	}
+	stage = "package_finalize"
 	preset := "cpu-hq-v1"
 	if encoder != "libx264" {
 		preset = encoder + "-hq-v1"

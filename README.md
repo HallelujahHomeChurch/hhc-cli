@@ -175,6 +175,24 @@ embedded-key update mechanism does not independently establish initial trust.
 Windows SmartScreen and macOS Gatekeeper prompts may remain because these are
 not Authenticode-signed or Apple-notarized application distributions.
 
+### Diagnosing local failures
+
+Preparation failures report a fixed pipeline stage. `media_process_failed`
+includes the process stage, exit code and numeric OS error (`os=0` means no OS
+code was captured). Paths, source metadata and raw tool stderr are not emitted.
+Preserve the operation ID and journal; do not create another upload to diagnose
+a failure. After the cause is resolved, resume the same operation under the
+same OS user, profile and operation storage directory. This diagnostic output
+does not establish that a particular source, GPU or Windows environment works.
+
+Download cleanup retries Windows sharing/lock violations for at most 1.5 seconds.
+Persistent failure reports `update_cleanup_failed` with a nonzero exit even if
+`data.installed=true`: the installation committed, but cleanup did not finish.
+Do not rerun `install` over that directory or delete the installation/journals.
+Confirm the selected version with the stable launcher's `version --json` and
+retain the cleanup failure for investigation. No permissions are changed and
+no locking process is terminated. Both install and update use this policy.
+
 ## Verification
 
 Development commands (the new Account producer contract must be released before

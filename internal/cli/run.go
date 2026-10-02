@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -478,6 +479,30 @@ func readSecret(ctx context.Context, input *os.File, diagnostics io.Writer, from
 }
 
 func classify(err error) (string, string, int, bool) {
+	// Preserve existing recovery codes and expose only fixed stages/numeric OS
+	// codes. Never print wrapped errors: they may contain local paths or URLs.
+	code, message, exit, retryable := classifyCause(err)
+	var preparation *media.PreparationFailure
+	if errors.As(err, &preparation) {
+		if code == "unknown_error" {
+			var systemCode syscall.Errno
+			errors.As(preparation.Cause, &systemCode)
+			code, message = "preparation_failed", fmt.Sprintf("本機準備失敗（os=%d），請保留原 operation ID。", uint64(systemCode))
+		}
+		return code, "階段 " + preparation.Stage + "：" + message, exit, retryable
+	}
+	return code, message, exit, retryable
+}
+
+func classifyCause(err error) (string, string, int, bool) {
+	var cleanup *update.CleanupFailure
+	if errors.As(err, &cleanup) {
+		return "update_cleanup_failed", fmt.Sprintf("安裝／更新暫存清理未完成（os=%d）；請查看 data.installed，勿重跑 install 覆蓋目錄。", cleanup.SystemCode), 1, false
+	}
+	var process *operation.ProcessFailure
+	if errors.As(err, &process) && !errors.Is(err, media.ErrLocalCleanup) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return "media_process_failed", fmt.Sprintf("媒體工具失敗（stage=%s exit=%d os=%d），請保留原 operation ID 供診斷。", process.Stage, process.ExitCode, process.SystemCode), 1, false
+	}
 	var remote *api.Error
 	if errors.As(err, &remote) {
 		switch remote.Code {
