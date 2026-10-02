@@ -185,6 +185,12 @@ a failure. After the cause is resolved, resume the same operation under the
 same OS user, profile and operation storage directory. This diagnostic output
 does not establish that a particular source, GPU or Windows environment works.
 
+MKV inputs omit the MOV-only `enable_drefs` option: ffprobe accepts that option
+on Matroska while ffmpeg rejects it before decoding. Native auto-preparation
+tests include MKV/FLAC, alongside the existing MP4/AAC tests. MOV/MP4 still
+explicitly disable external data references; the local-file/protocol and
+container allowlists remain enforced for every supported input.
+
 Download cleanup retries Windows sharing/lock violations for at most 1.5 seconds.
 Persistent failure reports `update_cleanup_failed` with a nonzero exit even if
 `data.installed=true`: the installation committed, but cleanup did not finish.

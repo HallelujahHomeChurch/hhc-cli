@@ -118,8 +118,10 @@ func TestNativeAutoPrepareAlignedPackage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	parent := t.TempDir()
-	source := filepath.Join(parent, "source.mp4")
-	if data, err := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "35", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", source).CombinedOutput(); err != nil {
+	// MKV + FLAC exercises the same non-MOV input path as OBS recordings.
+	// MP4/AAC remains covered by the CPU and native CLI preparation fixtures.
+	source := filepath.Join(parent, "source.mkv")
+	if data, err := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "35", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "flac", source).CombinedOutput(); err != nil {
 		t.Fatalf("fixture: %v %s", err, data)
 	}
 	value, err := PrepareAuto(ctx, source, filepath.Join(parent, "output"), ffmpeg, ffprobe, DefaultEncodeOptions(), nil)

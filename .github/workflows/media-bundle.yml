@@ -9,6 +9,7 @@ on:
     paths:
       - build/**
       - internal/bundle/**
+      - internal/media/**
       - internal/update/**
       - cmd/hhc-release/**
       - skills/hhc/**
