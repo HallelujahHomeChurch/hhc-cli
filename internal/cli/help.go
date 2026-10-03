@@ -27,7 +27,13 @@ func showHelp(args []string, output io.Writer) bool {
 		fmt.Fprintln(output, rootHelp)
 		return true
 	}
-	requested := helpRequested(args)
+	helpArgs := args
+	if len(args) > 3 && args[0] == "recordings" && slices.Contains([]string{"upload", "prepare", "get", "resume", "publish"}, args[1]) {
+		// Existing recording commands consume args[2] as a positional value.
+		// A complete invocation may legally name its source '-h' or '--help'.
+		helpArgs = args[3:]
+	}
+	requested := helpRequested(helpArgs)
 	if args[0] == "help" {
 		args, requested = args[1:], true
 	}

@@ -58,3 +58,16 @@ func TestHelpTokensAsFlagValuesRemainData(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpTokensAsSourceWithUploadOptionsRemainData(t *testing.T) {
+	for _, source := range []string{"-h", "--help"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		var out, diagnostics bytes.Buffer
+		code := Run(ctx, []string{"recordings", "upload", source, "--title", "聚會", "--profile", "uploader", "--operation-id", "00000000-0000-4000-8000-000000009907", "--json", "--no-input"}, nil, &out, &diagnostics, "test")
+		var value result
+		if json.Unmarshal(out.Bytes(), &value) != nil || code != 130 || value.Error == nil || value.Error.Code != "cancelled" {
+			t.Fatalf("source %q was treated as help: %d %s", source, code, &out)
+		}
+	}
+}
