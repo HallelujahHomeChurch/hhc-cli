@@ -238,6 +238,9 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 	if encoder != "libx264" {
 		preset = encoder + "-hq-v1"
 	}
+	if encoder == "h264_nvenc" {
+		preset = "h264_nvenc-hq-v2"
+	}
 	master, err := BuildMasterPlaylist(measured)
 	if err != nil {
 		return value, err
