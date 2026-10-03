@@ -27,7 +27,7 @@ func showHelp(args []string, output io.Writer) bool {
 		fmt.Fprintln(output, rootHelp)
 		return true
 	}
-	requested := slices.Contains(args, "-h") || slices.Contains(args, "--help")
+	requested := helpRequested(args)
 	if args[0] == "help" {
 		args, requested = args[1:], true
 	}
@@ -57,6 +57,25 @@ func showHelp(args []string, output io.Writer) bool {
 		}
 	}
 	return true
+}
+
+func helpRequested(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return false
+		}
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+		name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		// These existing flags consume their next argv element even if it starts
+		// with '-'. Match flag.FlagSet semantics; titles/scopes remain literal data.
+		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "operation-id", "output", "timeout", "directory"}, name) {
+			i++
+		}
+	}
+	return false
 }
 
 var commandHelp = map[string]string{

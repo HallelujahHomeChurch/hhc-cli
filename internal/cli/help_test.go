@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -42,5 +43,18 @@ func TestHelpDoesNotHideUnknownCommandsOrEchoArguments(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	if Run(context.Background(), []string{"recordings", "upload", "private-source", "-h"}, nil, &out, &diagnostics, "test") != 0 || strings.Contains(out.String()+diagnostics.String(), "private-source") {
 		t.Fatalf("help parsed or echoed source: %s %s", &out, &diagnostics)
+	}
+}
+
+func TestHelpTokensAsFlagValuesRemainData(t *testing.T) {
+	for _, title := range []string{"-h", "--help"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		var out, diagnostics bytes.Buffer
+		code := Run(ctx, []string{"recordings", "upload", "private-source", "--title", title, "--profile", "uploader", "--operation-id", "00000000-0000-4000-8000-000000009907", "--json", "--no-input"}, nil, &out, &diagnostics, "test")
+		var value result
+		if json.Unmarshal(out.Bytes(), &value) != nil || code != 130 || value.Error == nil || value.Error.Code != "cancelled" {
+			t.Fatalf("title %q was treated as help: %d %s", title, code, &out)
+		}
 	}
 }
