@@ -194,6 +194,15 @@ a failure. After the cause is resolved, resume the same operation under the
 same OS user, profile and operation storage directory. This diagnostic output
 does not establish that a particular source, GPU or Windows environment works.
 
+Encoded-output checks report `hls_validate`, separate from an encoder process
+failure. Diagnostics identify the rendition, zero-based segment (`-1` means a
+rendition/playlist check), fixed check name, and relevant numeric/boolean facts.
+For example, `packet_fields packet=0 ... duration_missing=true` identifies a
+missing packet duration without emitting raw probe output. JSON uses the same
+safe message and existing error/exit/recovery codes. Validation thresholds,
+encoder selection and journal schemas are unchanged. A progress value of 100%
+only describes encoding; it does not establish HLS validation or remote ready.
+
 MKV inputs omit the MOV-only `enable_drefs` option: ffprobe accepts that option
 on Matroska while ffmpeg rejects it before decoding. Native auto-preparation
 tests include MKV/FLAC, alongside the existing MP4/AAC tests. MOV/MP4 still

@@ -38,4 +38,8 @@ func TestEncodedProbeRejectsWrongCodecTimelineAndMissingKeyframe(t *testing.T) {
 			t.Fatalf("accepted invalid %s", change[0])
 		}
 	}
+	_, err := parseEncodedProbe([]byte(strings.Replace(valid, `"duration_time":"0.033333"`, `"duration_time":""`, 1)), r)
+	if err == nil || !strings.Contains(err.Error(), "packet_fields") || !strings.Contains(err.Error(), "packet=0") || !strings.Contains(err.Error(), "duration_missing=true") {
+		t.Fatalf("missing packet diagnostic: %v", err)
+	}
 }

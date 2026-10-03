@@ -474,9 +474,21 @@ func classify(err error) (string, string, int, bool) {
 	// Preserve existing recovery codes and expose only fixed stages/numeric OS
 	// codes. Never print wrapped errors: they may contain local paths or URLs.
 	code, message, exit, retryable := classifyCause(err)
+	var validation *media.ValidationFailure
+	diagnostic := ""
+	if errors.As(err, &validation) {
+		diagnostic = " HLS 驗證：" + validation.Error() + "。請保留原 operation ID 與此診斷訊息。"
+		if code == "invalid_input" {
+			message = "本機 HLS 產物驗證失敗，未確認完成。"
+		}
+	}
 	var preparation *media.PreparationFailure
 	if errors.As(err, &preparation) {
-		if preparation.Stage == "encode_nvenc" && code == "media_process_failed" {
+		stage := preparation.Stage
+		if validation != nil {
+			stage = "hls_validate"
+		}
+		if stage == "encode_nvenc" && code == "media_process_failed" {
 			message += " NVIDIA NVENC 轉檔失敗；請確認顯卡支援、驅動與來源檔案。不會改用其他 GPU 或 CPU；排除原因後以原操作 ID 執行 hhc recordings resume。"
 		}
 		if code == "unknown_error" {
@@ -484,9 +496,9 @@ func classify(err error) (string, string, int, bool) {
 			errors.As(preparation.Cause, &systemCode)
 			code, message = "preparation_failed", fmt.Sprintf("本機準備失敗（os=%d），請保留原 operation ID。", uint64(systemCode))
 		}
-		return code, "階段 " + preparation.Stage + "：" + message, exit, retryable
+		return code, "階段 " + stage + "：" + message + diagnostic, exit, retryable
 	}
-	return code, message, exit, retryable
+	return code, message + diagnostic, exit, retryable
 }
 
 func classifyCause(err error) (string, string, int, bool) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -45,5 +46,38 @@ func TestNVENCFailureIsActionableWithoutChangingRecoveryCode(t *testing.T) {
 	code, message, _, _ = classify(&media.PreparationFailure{Stage: "encode_nvenc", Cause: context.DeadlineExceeded})
 	if code != "timeout" || strings.Contains(message, "驅動") {
 		t.Fatalf("timeout misdiagnosed as driver failure: %s %s", code, message)
+	}
+}
+
+func TestHLSValidationReportsSafeCheckWithoutChangingRecovery(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "720p")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "index.m3u8"), []byte("https://secret.invalid/private-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, cause := media.MeasureRendition(context.Background(), "unused", directory, media.RecordingRendition{
+		Name: "720p", Width: 1280, Height: 720, FrameRate: 30, DurationSeconds: 30,
+		SegmentCount: 1, VideoBitrate: 1500000, AudioBitrate: 128000,
+	})
+	code, message, exit, retry := classify(&media.PreparationFailure{Stage: "encode_nvenc", Cause: cause})
+	if code != "invalid_input" || exit != 2 || retry || !strings.Contains(message, "hls_validate") || !strings.Contains(message, "720p") || !strings.Contains(message, "playlist_closure") {
+		t.Fatalf("missing HLS diagnostic: %s %q %d %v", code, message, exit, retry)
+	}
+	if strings.Contains(message, directory) || strings.Contains(message, "private-token") || strings.Contains(message, "驅動") {
+		t.Fatalf("unsafe or misleading diagnostic: %s", message)
+	}
+	playlist := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:30\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:30,\nseg-000000.m4s\n#EXT-X-ENDLIST\n"
+	if err := os.WriteFile(filepath.Join(directory, "index.m3u8"), []byte(playlist), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, cause = media.MeasureRendition(context.Background(), "unused", directory, media.RecordingRendition{
+		Name: "720p", Width: 1280, Height: 720, FrameRate: 30, DurationSeconds: 30,
+		SegmentCount: 1, VideoBitrate: 1500000, AudioBitrate: 128000,
+	})
+	code, message, _, _ = classify(&media.PreparationFailure{Stage: "encode_nvenc", Cause: cause})
+	if !errors.Is(cause, media.ErrInvalidInput) || code != "invalid_input" || !strings.Contains(message, "segment=0 check=fragment_read") || strings.Contains(message, directory) {
+		t.Fatalf("missing safe fragment diagnostic: %s %s", code, message)
 	}
 }

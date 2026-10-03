@@ -186,6 +186,11 @@ func testCPUEncodeAligned(t *testing.T, fps int) {
 		if err != nil || len(actual.SegmentBytes) != 3 || actual.SegmentDurations[0] != 30 || actual.Codecs == "" {
 			t.Fatalf("bounded encoded measurement: %+v %v", actual, err)
 		}
+		wrongDuration := r
+		wrongDuration.DurationSeconds += 0.75
+		if _, err := MeasureRendition(ctx, ffprobe, output, wrongDuration); err == nil || !strings.Contains(err.Error(), "segment=-1 check=rendition_duration") {
+			t.Fatalf("rendition-wide failure mislabeled as a fragment failure: %v", err)
+		}
 		playlistPath := filepath.Join(output, "index.m3u8")
 		playlist, err := os.ReadFile(playlistPath)
 		if err != nil {
