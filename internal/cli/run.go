@@ -53,7 +53,16 @@ type commandError struct {
 func Run(ctx context.Context, args []string, input *os.File, output, diagnostics io.Writer, version string) int {
 	jsonMode := slices.Contains(args, "--json") || slices.Contains(args, "--json=true")
 	r := result{SchemaVersion: 1}
+	var progress *progressDisplay
+	defer func() {
+		if progress != nil {
+			progress.Close()
+		}
+	}()
 	finish := func(err error) int {
+		if progress != nil {
+			progress.Close()
+		}
 		exit := 0
 		if err != nil {
 			code, message, status, retryable := classify(err)
@@ -285,7 +294,8 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		}
 		if journal.State().Intent.Command == "prepare" {
 			defer journal.Close()
-			journal.Progress = recordingProgress(diagnostics, jsonMode, operationID)
+			progress = newProgressDisplay(diagnostics, jsonMode, operationID, !noninteractive)
+			journal.Progress = progress.Encoding
 			r.Profile = nil
 			if !jsonMode {
 				fmt.Fprintln(diagnostics, "Operation:", operationID)
@@ -342,7 +352,11 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 			return finish(err)
 		}
 		defer journal.Close()
-		journal.Progress = recordingProgress(diagnostics, jsonMode, operationID)
+		progress = newProgressDisplay(diagnostics, jsonMode, operationID, !noninteractive)
+		journal.Progress = progress.Encoding
+		if progress.interactive {
+			journal.TransferProgress = progress.Transfer
+		}
 		if journal.State().Intent.Profile != profile {
 			return finish(recordings.ErrOperationConflict)
 		}

@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,16 +23,17 @@ import (
 
 func TestUploadResumesServerConfirmedPackageAndWaitsForReady(t *testing.T) {
 	for _, missing := range []bool{false, true} {
-		t.Run(fmt.Sprint(missing), func(t *testing.T) { testUploadResume(t, missing, 0, false, false) })
+		t.Run(fmt.Sprint(missing), func(t *testing.T) { testUploadResume(t, missing, 0, false, false, false) })
 	}
 	for _, rejections := range []int{1, 2} {
-		t.Run(fmt.Sprintf("url-rejections-%d", rejections), func(t *testing.T) { testUploadResume(t, true, rejections, false, false) })
+		t.Run(fmt.Sprintf("url-rejections-%d", rejections), func(t *testing.T) { testUploadResume(t, true, rejections, false, false, false) })
 	}
-	t.Run("lost-complete-response", func(t *testing.T) { testUploadResume(t, false, 0, true, false) })
-	t.Run("publish-ready", func(t *testing.T) { testUploadResume(t, false, 0, false, true) })
+	t.Run("lost-complete-response", func(t *testing.T) { testUploadResume(t, false, 0, true, false, false) })
+	t.Run("publish-ready", func(t *testing.T) { testUploadResume(t, false, 0, false, true, false) })
+	t.Run("parallel-upload", func(t *testing.T) { testUploadResume(t, true, 0, false, false, true) })
 }
 
-func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete bool, publish bool) {
+func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete bool, publish, allMissing bool) {
 	intent := journalIntent(t)
 	intent.Prepare = false
 	intent.Publish = publish
@@ -74,7 +77,10 @@ func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete b
 		scopes = append(scopes, "cms:recordings:publish")
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	var handlerMu sync.Mutex
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerMu.Lock()
+		defer handlerMu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/account/v1/oauth/token" {
 			w.Header().Set("Cache-Control", "no-store")
@@ -84,7 +90,7 @@ func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete b
 		if r.Method == "PUT" {
 			puts++
 			body, _ := io.ReadAll(r.Body)
-			if !missing || string(body) != "master.m3u8" || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
+			if !missing || !allMissing && string(body) != "master.m3u8" || allMissing && !slices.Contains(paths, string(body)) || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
 				t.Error("unsafe or redundant byte upload")
 			}
 			if puts <= rejections {
@@ -118,6 +124,9 @@ func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete b
 			if missing {
 				value.ConfirmedObjects = paths[1:]
 			}
+			if allMissing {
+				value.ConfirmedObjects = nil
+			}
 			if completed {
 				value.State = "ready"
 				value.ReadyAt = &now
@@ -140,12 +149,24 @@ func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete b
 			var input struct {
 				Paths []string `json:"paths"`
 			}
-			if json.NewDecoder(r.Body).Decode(&input) != nil || len(input.Paths) != 1 || input.Paths[0] != "master.m3u8" {
+			if json.NewDecoder(r.Body).Decode(&input) != nil || !allMissing && (len(input.Paths) != 1 || input.Paths[0] != "master.m3u8") || allMissing && len(input.Paths) != 4 {
 				t.Error("signed already-confirmed objects")
 			}
 			query := url.Values{"X-Amz-Date": {now.Format("20060102T150405Z")}, "X-Amz-Expires": {"900"}, "X-Amz-SignedHeaders": {"content-length;content-type;host"}, "X-Amz-Signature": {strings.Repeat("a", 64)}}
-			target := "https://" + strings.Repeat("a", 32) + ".r2.cloudflarestorage.com/test-bucket/recordings/packages/" + state.PackageID + "/staging/master.m3u8?" + query.Encode()
-			json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"path": "master.m3u8", "url": target, "method": "PUT", "headers": http.Header{"Content-Type": {"application/vnd.apple.mpegurl"}, "Content-Length": {"11"}}}}})
+			var targets []map[string]any
+			for _, path := range input.Paths {
+				for _, object := range inv.Objects {
+					if object.Path == path {
+						target := "https://" + strings.Repeat("a", 32) + ".r2.cloudflarestorage.com/test-bucket/recordings/packages/" + state.PackageID + "/staging/" + path + "?" + query.Encode()
+						contentType := "video/mp4"
+						if strings.HasSuffix(path, ".m3u8") {
+							contentType = "application/vnd.apple.mpegurl"
+						}
+						targets = append(targets, map[string]any{"path": path, "url": target, "method": "PUT", "headers": http.Header{"Content-Type": {contentType}, "Content-Length": {fmt.Sprint(object.SizeBytes)}}})
+					}
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"data": targets})
 			return
 		default:
 			t.Errorf("unexpected upload or mutation %s %s", r.Method, r.URL.Path)
@@ -165,7 +186,30 @@ func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete b
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	var progress []TransferProgress
+	j.TransferProgress = func(p TransferProgress) { progress = append(progress, p) }
 	value, err := UploadPrepared(ctx, api.NewClient(token, nil), NewUploader(), j)
+	if len(progress) == 0 {
+		t.Fatal("missing byte-based transfer progress")
+	}
+	initialBytes := int64(58)
+	if missing {
+		initialBytes = 47
+	}
+	if allMissing {
+		initialBytes = 0
+	}
+	if progress[0].CompletedBytes != initialBytes {
+		t.Fatal("resume progress omitted server-confirmed objects")
+	}
+	for _, p := range progress {
+		if p.TotalBytes != 58 || p.CompletedBytes < 0 || p.CompletedBytes > 58 {
+			t.Fatalf("invalid transfer accounting: %+v", p)
+		}
+		if rejections == 2 && p.CompletedBytes == p.TotalBytes {
+			t.Fatal("rejected PUT reported as transferred")
+		}
+	}
 	if rejections == 2 {
 		if err != ErrUploadURLRejected || puts != 2 || signs != 2 || completed {
 			t.Fatalf("unbounded re-sign puts=%d signs=%d completed=%v err=%v", puts, signs, completed, err)
@@ -175,7 +219,14 @@ func testUploadResume(t *testing.T, missing bool, rejections int, lostComplete b
 	if err != nil || value.Package.State != "ready" || queries != 2+rejections || !completed {
 		t.Fatalf("upload result %+v %v queries=%d", value, err, queries)
 	}
-	if missing && (puts != 1+rejections || signs != 1+rejections) || !missing && (puts != 0 || signs != 0) {
+	if progress[len(progress)-1].CompletedBytes != 58 {
+		t.Fatal("resume did not include server-confirmed bytes or successful PUT")
+	}
+	expectedPuts := 1 + rejections
+	if allMissing {
+		expectedPuts = 4
+	}
+	if missing && (puts != expectedPuts || signs != 1+rejections) || !missing && (puts != 0 || signs != 0) {
 		t.Fatalf("wrong transfer counts: puts=%d signs=%d", puts, signs)
 	}
 	if !value.RequestedActionSatisfied || publish && (publications != 1 || j.State().PublishExpectedVersion != 4) {
