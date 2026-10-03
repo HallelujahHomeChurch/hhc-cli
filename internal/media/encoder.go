@@ -30,9 +30,9 @@ func encodeArguments(source, output string, rendition RecordingRendition, encode
 	if rendition.FrameRate < 20 {
 		bframes = "0"
 	} // Keep DTS/PTS segment boundaries within 100 ms for sparse video.
-	if encoder == "h264_videotoolbox" {
-		// VT reordering emits variable packet durations in fMP4. Keep the same
-		// strict CFR/segment validation used by the server, without B-frames.
+	if encoder == "h264_videotoolbox" || encoder == "h264_nvenc" {
+		// Do not let presentation reordering move audio/video across fMP4
+		// fragment boundaries. Keep the server's strict CFR/alignment checks.
 		bframes = "0"
 	}
 	codec := []string{"-c:v", encoder, "-profile:v", "high", "-pix_fmt", "yuv420p", "-threads", "2", "-bf", bframes}

@@ -13,6 +13,38 @@ import (
 
 const journalFixtureID = "00000000-0000-4000-8000-000000000031"
 
+func TestJournalReopensBothNVENCPresetGenerations(t *testing.T) {
+	for _, preset := range []string{"h264_nvenc-hq-v1", "h264_nvenc-hq-v2"} {
+		t.Run(preset, func(t *testing.T) {
+			base, intent := t.TempDir(), journalIntent(t)
+			j, err := OpenJournal(base, journalFixtureID, &intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := j.State()
+			state.Encoding = &media.EncodingSummary{ActualEncoder: "h264_nvenc", PresetVersion: preset}
+			if err := j.Save(state); err != nil {
+				j.Close()
+				t.Fatal(err)
+			}
+			j.Close()
+			j, err = OpenJournal(base, journalFixtureID, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer j.Close()
+			if j.State().Encoding.PresetVersion != preset {
+				t.Fatal("lost preset evidence on resume")
+			}
+			state = j.State()
+			state.Encoding.PresetVersion = "h264_nvenc-hq-v3"
+			if j.Save(state) == nil {
+				t.Fatal("accepted an unknown NVENC preset")
+			}
+		})
+	}
+}
+
 func TestJournalPinsValidatedEncodingSummary(t *testing.T) {
 	intent := journalIntent(t)
 	j, err := OpenJournal(t.TempDir(), journalFixtureID, &intent)

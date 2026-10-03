@@ -257,7 +257,11 @@ func validState(v JournalState) bool {
 			return false
 		}
 		if v.Encoding.PresetVersion != preset {
-			return false
+			// Older validated packages remain resumable after the no-reorder
+			// NVENC preset ships; all other encoders keep their existing preset.
+			if v.Encoding.ActualEncoder != "h264_nvenc" || v.Encoding.PresetVersion != "h264_nvenc-hq-v2" {
+				return false
+			}
 		}
 	}
 	if v.SchemaVersion != 1 || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 || v.PackageBytes < 0 || v.PackageBytes > media.RecordingPackageMaxBytes || v.GeneratedOwned && v.Intent.Command != "prepare" && (v.Intent.Command != "upload" || !v.Intent.Prepare) {

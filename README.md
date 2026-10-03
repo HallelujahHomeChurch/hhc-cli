@@ -142,6 +142,13 @@ the operation at `encode_nvenc`; retain its operation ID and resume after fixing
 the cause. The bundled NVIDIA headers require Windows driver 610.0 or newer;
 the GPU itself must also support NVENC. Encoding success on real Windows GPUs
 remains a separate device acceptance gate, not a claim from hosted CI.
+NVENC uses the `h264_nvenc-hq-v2` preset without B-frame reordering so presentation
+timestamps do not add reorder offsets to HLS fragment boundaries. Bitrates, P6/HQ,
+adaptive quantization, and the server's 100 ms audio/video checks remain unchanged.
+Disabling B-frames trades some compression efficiency for simpler fragment timing.
+Existing `h264_nvenc-hq-v1` operation journals remain resumable; failed preparation
+uses the new preset when resumed with the same operation ID. CPU-only CI tests the
+long fractional-rate mux path, not real NVIDIA output or the user's source.
 macOS probes VideoToolbox and falls back to libx264 medium. A macOS hardware encode may
 restart on CPU once only after an independent synthetic probe also fails;
 source corruption, cancellation, disk pressure, and cleanup failures do not
