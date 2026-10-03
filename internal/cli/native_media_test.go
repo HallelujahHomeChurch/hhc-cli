@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +104,7 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 		}
 	})
 	output := filepath.Join(parent, "保留 HLS")
+	noNVENC := runtime.GOOS == "windows" && os.Getenv("HHC_TEST_NO_NVENC") == "1"
 	for _, args := range [][]string{
 		{"recordings", "prepare", source, "--output", output, "--operation-id", id, "--json", "--no-input"},
 		{"recordings", "resume", id, "--json", "--no-input"},
@@ -111,6 +113,19 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 		var diagnostics bytes.Buffer
 		cmd.Stderr = &diagnostics
 		out, err := cmd.Output()
+		if noNVENC {
+			var value result
+			if err == nil || json.Unmarshal(out, &value) != nil || value.OK || value.Error == nil || value.Error.Code != "media_process_failed" || !strings.Contains(value.Error.Message, "encode_nvenc") || value.OperationID == nil || *value.OperationID != id {
+				t.Fatalf("missing-NVIDIA command must fail safely with original ID: %v %s", err, out)
+			}
+			for dec := json.NewDecoder(&diagnostics); dec.More(); {
+				var p struct{ Encoder string }
+				if err := dec.Decode(&p); err != nil || p.Encoder != "h264_nvenc" {
+					t.Fatalf("unexpected fallback progress: %v %+v", err, p)
+				}
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatalf("command: %v %s", err, out)
 		}
@@ -131,7 +146,7 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 				Type, OperationID, Encoder, Rendition string
 				Fraction                              float64
 			}
-			if json.NewDecoder(&diagnostics).Decode(&progress) != nil || progress.Type != "encoding_progress" || progress.OperationID != id || !slices.Contains([]string{"libx264", "h264_videotoolbox", "h264_nvenc", "h264_qsv", "h264_amf"}, progress.Encoder) || progress.Rendition != "720p" || progress.Fraction < 0 || progress.Fraction > 1 {
+			if json.NewDecoder(&diagnostics).Decode(&progress) != nil || progress.Type != "encoding_progress" || progress.OperationID != id || !slices.Contains([]string{"libx264", "h264_videotoolbox", "h264_nvenc"}, progress.Encoder) || runtime.GOOS == "windows" && progress.Encoder != "h264_nvenc" || progress.Rendition != "720p" || progress.Fraction < 0 || progress.Fraction > 1 {
 				t.Fatal("missing separate structured stderr progress")
 			}
 		}
@@ -139,6 +154,12 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 	after, err := os.ReadFile(source)
 	if err != nil || sha256.Sum256(after) != hash {
 		t.Fatal("changed source")
+	}
+	if noNVENC {
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatal("failed command finalized output")
+		}
+		return
 	}
 	if _, err := os.Stat(filepath.Join(output, "package.json")); err != nil {
 		t.Fatal("user output missing")

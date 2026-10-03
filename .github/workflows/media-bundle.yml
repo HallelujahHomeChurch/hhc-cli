@@ -65,8 +65,8 @@ jobs:
         run: |
           media_build="$(cygpath -u "$RUNNER_TEMP")/media-bundle"
           bash build/ffmpeg.sh "$media_build"
-          # Available backends are not proof of a working GPU/driver. Runtime
-          # selection still requires actual target-setting probe encodes.
+          # Available backends are not proof of a working GPU/driver. Windows
+          # uses NVENC directly and fails closed rather than changing devices.
           "$media_build/bundle/ffmpeg/ffmpeg.exe" -hide_banner -encoders > "$media_build/encoders.txt"
           for encoder in h264_nvenc h264_qsv h264_amf; do
             grep -w "$encoder" "$media_build/encoders.txt"
@@ -80,6 +80,7 @@ jobs:
           done
           HHC_TEST_FFMPEG="$(cygpath -m "$media_build/bundle/ffmpeg/ffmpeg.exe")" \
           HHC_TEST_FFPROBE="$(cygpath -m "$media_build/bundle/ffmpeg/ffprobe.exe")" \
+          HHC_TEST_NO_NVENC=1 \
           HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media ./internal/cli -count=1
       - name: Retain verified bundle with corresponding sources
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

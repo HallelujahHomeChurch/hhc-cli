@@ -195,11 +195,14 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 	var measured []RenditionMedia
 	for attempt := 0; attempt < 2; attempt++ {
 		stage = "encode_renditions"
+		if encoder == "h264_nvenc" {
+			stage = "encode_nvenc"
+		}
 		measured, err = encodeRenditions(workCtx, stable.Name(), staging, ffmpeg, ffprobe, plan.Renditions, encoder, options.Progress)
 		if err == nil {
 			break
 		}
-		if encoder == "libx264" {
+		if encoder == "libx264" || encoder == "h264_nvenc" {
 			return value, err
 		}
 		if cause := context.Cause(workCtx); cause != nil {

@@ -32,4 +32,18 @@ func TestSafeNativeFailureClassification(t *testing.T) {
 			t.Fatalf("classification: %s %q %d", code, message, exit)
 		}
 	}
+
+}
+
+func TestNVENCFailureIsActionableWithoutChangingRecoveryCode(t *testing.T) {
+	code, message, exit, retry := classify(&media.PreparationFailure{
+		Stage: "encode_nvenc", Cause: &operation.ProcessFailure{Stage: "tool", ExitCode: 1},
+	})
+	if code != "media_process_failed" || exit != 1 || retry || !strings.Contains(message, "NVIDIA") || !strings.Contains(message, "不會") || !strings.Contains(message, "resume") {
+		t.Fatalf("NVENC failure: %s %q %d %v", code, message, exit, retry)
+	}
+	code, message, _, _ = classify(&media.PreparationFailure{Stage: "encode_nvenc", Cause: context.DeadlineExceeded})
+	if code != "timeout" || strings.Contains(message, "驅動") {
+		t.Fatalf("timeout misdiagnosed as driver failure: %s %s", code, message)
+	}
 }

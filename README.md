@@ -136,14 +136,23 @@ The approved target is Windows amd64 and macOS arm64, bundled FFmpeg, local HLS
 preparation, human/service login, resumable direct upload, explicit publication
 and signed manual updates. Original recordings are never deleted by the CLI.
 
-Preparation now probes actual target-setting encodes before selecting hardware:
-VideoToolbox on macOS, or NVENC, QSV, then AMF on Windows. Unsupported devices,
-drivers, or settings fall back to libx264 medium. A running hardware encode may
+Windows preparation uses NVIDIA NVENC directly, without hardware-selection
+probes or any QSV/AMF/CPU fallback. Unsupported devices, drivers or settings stop
+the operation at `encode_nvenc`; retain its operation ID and resume after fixing
+the cause. The bundled NVIDIA headers require Windows driver 610.0 or newer;
+the GPU itself must also support NVENC. Encoding success on real Windows GPUs
+remains a separate device acceptance gate, not a claim from hosted CI.
+macOS probes VideoToolbox and falls back to libx264 medium. A macOS hardware encode may
 restart on CPU once only after an independent synthetic probe also fails;
 source corruption, cancellation, disk pressure, and cleanup failures do not
 trigger this restart. The operation deadline never resets. Both renditions are
 regenerated together, never mixed across encoders. VideoToolbox disables B-frame
 reordering to meet the same strict fMP4 timing validation as the server.
+
+`hhc`, `hhc -h` and `hhc --help` show a short Chinese command overview. Use
+`hhc recordings -h` or `hhc auth -h` for each command group, and
+`hhc recordings upload -h` for examples and all supported upload options.
+Help does not start login, media processing or an upload operation.
 
 Progress goes to stderr (numeric JSON events with `--json`); stdout remains one
 final result. Progress may be dropped when its consumer is slow and is never

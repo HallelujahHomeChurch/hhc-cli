@@ -78,15 +78,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		}
 		return exit
 	}
-	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "help")) {
-		fmt.Fprintln(output, "Usage: hhc version [--json]\n       hhc auth login|status|logout [--profile NAME] [--json] [--no-input]\n\nLogin: --service-principal --client-id ID [--secret-stdin]\n       --scope 'cms:recordings:read cms:recordings:write cms:recordings:publish'\n\nHuman login opens the system browser. Service secrets are hidden; never use a secret argument.")
-		fmt.Fprintln(output, "\nRecording metadata: hhc recordings get ID [--profile NAME] [--json] [--no-input]")
-		fmt.Fprintln(output, "Upload package: hhc recordings upload DIRECTORY --title TITLE --profile NAME --operation-id UUID [--publish] [--timeout 4h] [--json] [--no-input]\nResume: hhc recordings resume UUID --profile NAME [--timeout 4h] [--json] [--no-input]")
-		fmt.Fprintln(output, "Publish: hhc recordings publish ID --profile NAME --operation-id UUID [--timeout 4h] [--json] [--no-input]")
-		fmt.Fprintln(output, "Prepare and upload: hhc recordings upload FILE --prepare --title TITLE --profile NAME --operation-id UUID [--publish] [--json] [--no-input]")
-		fmt.Fprintln(output, "Keep prepared package: hhc recordings prepare FILE --output DIRECTORY --operation-id UUID [--timeout 4h] [--json] [--no-input]")
-		fmt.Fprintln(output, "Update: hhc update [--check] [--json] [--no-input] (installation requires the managed launcher)")
-		fmt.Fprintln(output, "First installation: hhc install --directory ABSOLUTE_NEW_DIRECTORY [--json] [--no-input]")
+	if showHelp(args, output) {
 		return 0
 	}
 	var flags []string
@@ -484,6 +476,9 @@ func classify(err error) (string, string, int, bool) {
 	code, message, exit, retryable := classifyCause(err)
 	var preparation *media.PreparationFailure
 	if errors.As(err, &preparation) {
+		if preparation.Stage == "encode_nvenc" && code == "media_process_failed" {
+			message += " NVIDIA NVENC 轉檔失敗；請確認顯卡支援、驅動與來源檔案。不會改用其他 GPU 或 CPU；排除原因後以原操作 ID 執行 hhc recordings resume。"
+		}
 		if code == "unknown_error" {
 			var systemCode syscall.Errno
 			errors.As(preparation.Cause, &systemCode)

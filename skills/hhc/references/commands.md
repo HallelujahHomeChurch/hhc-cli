@@ -68,6 +68,7 @@ Unknown schema or malformed output means unconfirmed; never parse stderr as JSON
 | Exit 3 / authentication or credential store unavailable | Stop for explicit login/store access; no credential discovery. |
 | Exit 4 / permission denied | Stop; no account switching, extra grants, or retry loop. |
 | Conflict, session expired, package failed, source changed | Inspect/report; no automatic new operation. |
+| Windows `media_process_failed` at `encode_nvenc` | Stop and report. No other GPU/CPU fallback; resolve the cause before resuming the same operation. |
 | Recording timeout/lost response | One same-operation resume reconciles remote state; no prior proof of remote completion is needed. |
 | Recording operation busy | After the owning command finishes, one same-operation resume; never kill another job. |
 | `state_changed` / historical publish receipt | Do not republish automatically; current state may reflect an administrator's action. |

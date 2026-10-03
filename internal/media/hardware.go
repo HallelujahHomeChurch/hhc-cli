@@ -13,10 +13,16 @@ import (
 )
 
 func selectEncoder(ctx context.Context, platform string, probe func(string) error) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	// Windows is NVIDIA-only. The real encode reports device/driver failures;
+	// do not probe another device or silently select software encoding.
+	if platform == "windows" {
+		return "h264_nvenc", nil
+	}
 	var candidates []string
 	switch platform {
-	case "windows":
-		candidates = []string{"h264_nvenc", "h264_qsv", "h264_amf"}
 	case "darwin":
 		candidates = []string{"h264_videotoolbox"}
 	}

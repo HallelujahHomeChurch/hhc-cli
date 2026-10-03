@@ -62,6 +62,9 @@ jobs:
           $env:HHC_TEST_FFPROBE = Join-Path $mediaEncoders[0].DirectoryName 'ffprobe.exe'
           if (-not (Test-Path -LiteralPath $env:HHC_TEST_FFPROBE -PathType Leaf)) { throw 'Fixture probe missing' }
           $env:HHC_REQUIRE_MEDIA_TESTS = "1"
+          # Hosted Windows runners have no NVIDIA GPU: verify explicit NVENC
+          # failure/no fallback; the separate PrepareCPU fixtures still encode.
+          $env:HHC_TEST_NO_NVENC = "1"
           go test -race ./internal/media ./internal/cli -count=1
       - name: Install macOS media fixtures (not the release bundle)
         if: runner.os == 'macOS'
