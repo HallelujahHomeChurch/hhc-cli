@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -16,27 +17,65 @@ import (
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 )
 
+// ValidationFailure contains only internally generated checks and numbers.
+// Its cause remains inspectable without exposing paths or tool/source output.
+type ValidationFailure struct {
+	rendition string
+	segment   int
+	check     string
+	cause     error
+}
+
+func (e *ValidationFailure) Error() string {
+	return fmt.Sprintf("rendition=%s segment=%d check=%s", e.rendition, e.segment, e.check)
+}
+
+func (e *ValidationFailure) Unwrap() error { return e.cause }
+
+func invalidEncoded(check string) error {
+	return &ValidationFailure{segment: -1, check: check, cause: ErrInvalidInput}
+}
+
 // MeasureRendition reads only the fixed files produced in a private rendition
 // directory. Each probe sees one init+fragment, never a remote playlist or the
 // entire recording. Remote validation remains the authority for ready.
-func MeasureRendition(ctx context.Context, ffprobe, directory string, r RecordingRendition) (RenditionMedia, error) {
-	value := RenditionMedia{Rendition: r}
+func MeasureRendition(ctx context.Context, ffprobe, directory string, r RecordingRendition) (value RenditionMedia, err error) {
+	value = RenditionMedia{Rendition: r}
+	check, segment := "rendition_arguments", -1
+	defer func() {
+		if err == nil {
+			return
+		}
+		var inner *ValidationFailure
+		if errors.As(err, &inner) {
+			check = inner.check
+		}
+		name := "unknown"
+		if r.Name == "720p" || r.Name == "1080p" {
+			name = r.Name
+		}
+		err = &ValidationFailure{rendition: name, segment: segment, check: check, cause: err}
+	}()
 	if !filepath.IsAbs(directory) || !validRecordingRendition(r) || filepath.Base(directory) != r.Name {
 		return value, ErrInvalidInput
 	}
+	check = "rendition_directory"
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return value, err
 	}
 	defer root.Close()
+	check = "playlist_read"
 	playlist, err := readEncodedFile(root, "index.m3u8", RecordingPlaylistMaxBytes)
 	if err != nil {
 		return value, err
 	}
+	check = "playlist_parse"
 	value.SegmentDurations, value.TargetDuration, err = parseEncodedPlaylist(playlist, r.SegmentCount)
 	if err != nil {
 		return value, err
 	}
+	check = "probe_workspace"
 	scratch, err := os.MkdirTemp(filepath.Dir(directory), ".measure-")
 	if err != nil {
 		return value, err
@@ -45,6 +84,8 @@ func MeasureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 	defer func() { os.Remove(probePath); os.Remove(scratch) }()
 	var start, end float64
 	for n, duration := range value.SegmentDurations {
+		segment = n
+		check = "fragment_read"
 		if err := ctx.Err(); err != nil {
 			return value, err
 		}
@@ -83,10 +124,12 @@ func MeasureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 		if err := probe.Close(); err != nil {
 			return value, err
 		}
+		check = "fragment_probe_tool"
 		data, err := operation.RunTool(ctx, ffprobe, []string{"-v", "error", "-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-show_data", "-show_streams", "-show_packets", "-show_entries", "stream=index,codec_type,codec_name,width,height,pix_fmt,sample_rate,channels,profile,r_frame_rate,sample_aspect_ratio,extradata:packet=stream_index,pts_time,duration_time,flags", "-of", "json", probePath}, 1<<20)
 		if err != nil {
 			return value, err
 		}
+		check = "fragment_probe_parse"
 		actual, err := parseEncodedProbe(data, r)
 		if err != nil {
 			return value, err
@@ -96,17 +139,21 @@ func MeasureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 			value.StartSeconds = start
 			value.Codecs = actual.codecs
 		} else if math.Abs(actual.start-end) > 1/r.FrameRate+0.001 || actual.codecs != value.Codecs {
+			check = fmt.Sprintf("fragment_continuity previous_end=%.6f start=%.6f codecs_match=%t", end, actual.start, actual.codecs == value.Codecs)
 			return value, ErrInvalidInput
 		}
 		if math.Abs(actual.end-actual.start-duration) > 1/r.FrameRate+0.001 {
+			check = fmt.Sprintf("fragment_duration actual=%.6f expected=%.6f", actual.end-actual.start, duration)
 			return value, ErrInvalidInput
 		}
 		end = actual.end
 		value.SegmentBytes = append(value.SegmentBytes, size)
 	}
 	if math.Abs(end-start-r.DurationSeconds) > 1/r.FrameRate+0.001 {
+		check = fmt.Sprintf("rendition_duration actual=%.6f expected=%.6f", end-start, r.DurationSeconds)
 		return value, ErrInvalidInput
 	}
+	check = "playlist_bitrate"
 	if _, _, err := RecordingPlaylistBitrates(value.SegmentBytes, value.SegmentDurations, value.TargetDuration); err != nil {
 		return value, err
 	}
@@ -140,7 +187,7 @@ func readEncodedFile(root *os.Root, path string, limit int64) ([]byte, error) {
 func parseEncodedPlaylist(data []byte, count int) ([]float64, int, error) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(lines) < 5 || lines[0] != "#EXTM3U" || lines[len(lines)-1] != "#EXT-X-ENDLIST" {
-		return nil, 0, ErrInvalidInput
+		return nil, 0, invalidEncoded("playlist_closure")
 	}
 	var durations []float64
 	var pending float64
@@ -151,44 +198,44 @@ func parseEncodedPlaylist(data []byte, count int) ([]float64, int, error) {
 		switch {
 		case strings.HasPrefix(line, "#EXTINF:"):
 			if pending != 0 || !strings.HasSuffix(line, ",") {
-				return nil, 0, ErrInvalidInput
+				return nil, 0, invalidEncoded("playlist_duration_tag")
 			}
 			d, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimPrefix(line, "#EXTINF:"), ","), 64)
 			if err != nil || !finitePositive(d) || d > 31 {
-				return nil, 0, ErrInvalidInput
+				return nil, 0, invalidEncoded("playlist_segment_duration")
 			}
 			pending = d
 		case line == fmt.Sprintf("seg-%06d.m4s", len(durations)):
 			if pending == 0 {
-				return nil, 0, ErrInvalidInput
+				return nil, 0, invalidEncoded("playlist_segment_reference")
 			}
 			durations = append(durations, pending)
 			pending = 0
 		case strings.HasPrefix(line, "#EXT-X-TARGETDURATION:"):
 			if target != 0 {
-				return nil, 0, ErrInvalidInput
+				return nil, 0, invalidEncoded("playlist_target_duplicate")
 			}
 			var err error
 			target, err = strconv.Atoi(strings.TrimPrefix(line, "#EXT-X-TARGETDURATION:"))
 			if err != nil || target < 1 || target > 31 {
-				return nil, 0, ErrInvalidInput
+				return nil, 0, invalidEncoded("playlist_target_duration")
 			}
 		case line == `#EXT-X-MAP:URI="init.mp4"`:
 			if hasMap {
-				return nil, 0, ErrInvalidInput
+				return nil, 0, invalidEncoded("playlist_map_duplicate")
 			}
 			hasMap = true
 		case line == "#EXT-X-VERSION:7" || line == "#EXT-X-MEDIA-SEQUENCE:0" || line == "#EXT-X-PLAYLIST-TYPE:VOD" || line == "#EXT-X-INDEPENDENT-SEGMENTS":
 			if tags[line] {
-				return nil, 0, ErrInvalidInput
+				return nil, 0, invalidEncoded("playlist_tag_duplicate")
 			}
 			tags[line] = true
 		default:
-			return nil, 0, ErrInvalidInput
+			return nil, 0, invalidEncoded(fmt.Sprintf("playlist_tag_or_reference segment=%d", len(durations)))
 		}
 	}
 	if !hasMap || pending != 0 || target == 0 || len(durations) != count || !tags["#EXT-X-PLAYLIST-TYPE:VOD"] {
-		return nil, 0, ErrInvalidInput
+		return nil, 0, invalidEncoded(fmt.Sprintf("playlist_structure segments=%d expected=%d map=%t pending=%t target=%d vod=%t", len(durations), count, hasMap, pending != 0, target, tags["#EXT-X-PLAYLIST-TYPE:VOD"]))
 	}
 	return durations, target, nil
 }
@@ -225,7 +272,7 @@ func parseEncodedProbe(data []byte, r RecordingRendition) (encodedProbe, error) 
 	}
 	stage := "streams"
 	invalid := func() (encodedProbe, error) {
-		return encodedProbe{}, fmt.Errorf("%w: encoded %s", ErrInvalidInput, stage)
+		return encodedProbe{}, invalidEncoded(stage)
 	}
 	if len(data) > 1<<20 || json.Unmarshal(data, &output) != nil || len(output.Streams) != 2 || len(output.Packets) == 0 || len(output.Packets) > 4096 {
 		return invalid()
@@ -235,12 +282,14 @@ func parseEncodedProbe(data []byte, r RecordingRendition) (encodedProbe, error) 
 	for _, s := range output.Streams {
 		switch s.Type {
 		case "video":
+			stage = "video_stream"
 			a, b, ok := strings.Cut(s.Rate, "/")
 			num, e1 := strconv.ParseFloat(a, 64)
 			den, e2 := strconv.ParseFloat(b, 64)
 			if video != -1 || s.Index < 0 || s.Codec != "h264" || s.Width != r.Width || s.Height != r.Height || s.Pixels != "yuv420p" || s.Aspect != "1:1" || !ok || e1 != nil || e2 != nil || !finitePositive(num) || !finitePositive(den) || math.Abs(num/den-r.FrameRate) > 0.001 {
 				return invalid()
 			}
+			stage = "video_codec_configuration"
 			first := strings.Split(strings.TrimSpace(s.Extra), "\n")[0]
 			fields := strings.Fields(first)
 			if len(fields) < 4 || fields[0] != "00000000:" || len(fields[3]) < 2 {
@@ -253,15 +302,18 @@ func parseEncodedProbe(data []byte, r RecordingRendition) (encodedProbe, error) 
 			codecs = "avc1." + hex.EncodeToString(avcc[1:4]) + ",mp4a.40.2"
 			video = s.Index
 		case "audio":
+			stage = "audio_stream"
 			if audio != -1 || s.Index < 0 || s.Codec != "aac" || s.Profile != "LC" || s.SampleRate != "48000" || s.Channels < 1 || s.Channels > 2 {
 				return invalid()
 			}
 			audio = s.Index
 		default:
+			stage = "unexpected_stream"
 			return invalid()
 		}
 	}
 	if video < 0 || audio < 0 || video == audio {
+		stage = "stream_indices"
 		return invalid()
 	}
 	type packet struct {
@@ -269,8 +321,7 @@ func parseEncodedProbe(data []byte, r RecordingRendition) (encodedProbe, error) 
 		key           bool
 	}
 	tracks := map[int][]packet{video: nil, audio: nil}
-	stage = "packet fields"
-	for _, p := range output.Packets {
+	for n, p := range output.Packets {
 		pts, e1 := strconv.ParseFloat(p.PTS, 64)
 		duration, e2 := strconv.ParseFloat(p.Duration, 64)
 		missing := p.Stream == audio && p.Duration == ""
@@ -279,6 +330,7 @@ func parseEncodedProbe(data []byte, r RecordingRendition) (encodedProbe, error) 
 			e2 = nil
 		}
 		if _, ok := tracks[p.Stream]; !ok || e1 != nil || e2 != nil || math.IsNaN(pts) || math.IsInf(pts, 0) || math.IsNaN(duration) || math.IsInf(duration, 0) || duration <= 0 && !missing || duration > 1 {
+			stage = fmt.Sprintf("packet_fields packet=%d track=%d pts_valid=%t duration_valid=%t duration_missing=%t", n, p.Stream, e1 == nil && !math.IsNaN(pts) && !math.IsInf(pts, 0), e2 == nil && finitePositive(duration) && duration <= 1, p.Duration == "")
 			return invalid()
 		}
 		tracks[p.Stream] = append(tracks[p.Stream], packet{pts, duration, strings.Contains(p.Flags, "K")})
