@@ -149,6 +149,7 @@ func MeasureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 		end = actual.end
 		value.SegmentBytes = append(value.SegmentBytes, size)
 	}
+	segment = -1
 	if math.Abs(end-start-r.DurationSeconds) > 1/r.FrameRate+0.001 {
 		check = fmt.Sprintf("rendition_duration actual=%.6f expected=%.6f", end-start, r.DurationSeconds)
 		return value, ErrInvalidInput
