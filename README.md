@@ -161,6 +161,18 @@ retained in the operation journal. macOS hardware preparation has been tested
 with the native CI-built FFmpeg bundle; Windows GPU presence/driver behavior and
 real congregation-recording quality still require device acceptance.
 
+Interactive stdin/stderr terminals show encoding and upload as a single updating
+progress bar, adapting to the terminal width without ANSI cursor commands.
+New frames fit the current width; terminals that reflow existing text when resized
+may leave an earlier frame on a preceding row.
+Encoding retains rendition, encoder and speed when space permits. Upload progress
+counts bytes of server-confirmed objects plus successful PUTs; rejected/retried
+PUTs are not double-counted. A transferred 100% is not ready: server processing
+shows a separate waiting-for-validation status. Progress ends on its own line
+before the unchanged final result or full error diagnostic. `--json`, `--no-input`,
+redirected/nonterminal stderr and `TERM=dumb` retain existing line-based output;
+the new upload observer emits no extra JSON events or journal fields.
+
 ## Maintainer release workflow
 
 `Release` accepts stable `vMAJOR.MINOR.PATCH` tags only when their commit is

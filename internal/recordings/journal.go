@@ -66,11 +66,12 @@ type JournalState struct {
 // again and never treats this local file as proof of readiness or publication.
 type Journal struct {
 	// Progress is ephemeral numeric diagnostics, never evidence of remote readiness.
-	Progress  func(media.EncodingProgress)
-	root      *os.Root
-	lock      *os.File
-	directory string
-	state     JournalState
+	Progress         func(media.EncodingProgress)
+	TransferProgress func(TransferProgress)
+	root             *os.Root
+	lock             *os.File
+	directory        string
+	state            JournalState
 }
 
 func OpenJournal(base, id string, intent *Intent) (*Journal, error) {

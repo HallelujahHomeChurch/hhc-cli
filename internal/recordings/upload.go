@@ -14,6 +14,14 @@ import (
 var ErrPackageFailed = errors.New("package_failed")
 var ErrSessionExpired = errors.New("session_expired")
 
+// TransferProgress is ephemeral transport diagnostics, never remote readiness.
+// Resumed progress includes server-confirmed objects, not just this invocation.
+type TransferProgress struct {
+	CompletedBytes int64
+	TotalBytes     int64
+	State          string
+}
+
 type UploadResult struct {
 	OperationID              string                   `json:"operationId"`
 	Package                  api.Package              `json:"-"`
@@ -86,6 +94,9 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 				return result, api.ErrInvalidResponse
 			}
 			result.TransferState, result.ValidationState = "complete", pkg.State
+			if j.TransferProgress != nil {
+				j.TransferProgress(TransferProgress{State: pkg.State})
+			}
 			if err := waitContext(ctx, delay); err != nil {
 				return result, err
 			}
@@ -138,9 +149,11 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 		}
 	}
 	objects := make(map[string]media.RecordingPackageObject, len(inv.Objects))
+	var transferBytes int64
 	result.RecordingID, result.PackageID = state.RecordingID, state.PackageID
 	for _, object := range inv.Objects {
 		objects[object.Path] = object
+		transferBytes += object.SizeBytes
 	}
 	root, err := os.OpenRoot(input)
 	if err != nil {
@@ -181,6 +194,24 @@ reconcile:
 			if !time.Now().Before(pkg.ExpiresAt) {
 				return result, ErrSessionExpired
 			}
+			var accepted func(string)
+			if j.TransferProgress != nil {
+				var transferred int64
+				for path := range confirmed {
+					transferred += objects[path].SizeBytes
+				}
+				j.TransferProgress(TransferProgress{transferred, transferBytes, "uploading"})
+				var progressMu sync.Mutex
+				accepted = func(path string) {
+					progressMu.Lock()
+					defer progressMu.Unlock()
+					if !confirmed[path] {
+						confirmed[path] = true
+						transferred += objects[path].SizeBytes
+						j.TransferProgress(TransferProgress{transferred, transferBytes, "uploading"})
+					}
+				}
+			}
 			missing := make([]string, 0, len(objects)-len(confirmed))
 			for _, object := range inv.Objects {
 				if !confirmed[object.Path] {
@@ -194,7 +225,7 @@ reconcile:
 				if err != nil {
 					return result, err
 				}
-				if err := uploadBatch(ctx, u, root, state.PackageID, objects, signed); err != nil {
+				if err := uploadBatch(ctx, u, root, state.PackageID, objects, signed, accepted); err != nil {
 					if errors.Is(err, ErrUploadURLRejected) && !resigned {
 						resigned = true
 						continue reconcile
@@ -224,6 +255,9 @@ reconcile:
 		case "freezing", "validating":
 			result.TransferState = "complete"
 			result.ValidationState = pkg.State
+			if j.TransferProgress != nil {
+				j.TransferProgress(TransferProgress{transferBytes, transferBytes, pkg.State})
+			}
 			if err := waitContext(ctx, pollDelay); err != nil {
 				return result, err
 			}
@@ -300,7 +334,7 @@ func confirmedPackage(ctx context.Context, c *api.Client, state JournalState, ob
 	}
 }
 
-func uploadBatch(ctx context.Context, u *Uploader, root *os.Root, pkg string, objects map[string]media.RecordingPackageObject, signed []api.SignedObject) error {
+func uploadBatch(ctx context.Context, u *Uploader, root *os.Root, pkg string, objects map[string]media.RecordingPackageObject, signed []api.SignedObject, accepted func(string)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	jobs := make(chan api.SignedObject)
@@ -330,6 +364,9 @@ func uploadBatch(ctx context.Context, u *Uploader, root *os.Root, pkg string, ob
 					errorsOut <- err
 					cancel()
 					return
+				}
+				if accepted != nil {
+					accepted(target.Path)
 				}
 			}
 		})
