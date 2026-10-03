@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"os"
 	"os/exec"
@@ -15,22 +16,18 @@ import (
 )
 
 func TestAutoEncoderRequiresRealProbe(t *testing.T) {
-	var attempted []string
-	got, err := selectEncoder(context.Background(), "windows", func(name string) error {
-		attempted = append(attempted, name)
-		if name == "h264_qsv" {
-			return nil
-		}
+	got, err := selectEncoder(context.Background(), "windows", func(string) error {
+		t.Fatal("Windows must use NVENC without probing another encoder")
 		return operation.ErrProcessFailed
 	})
-	if err != nil || got != "h264_qsv" || !slices.Equal(attempted, []string{"h264_nvenc", "h264_qsv"}) {
-		t.Fatalf("selection: %s %v %v", got, attempted, err)
+	if err != nil || got != "h264_nvenc" {
+		t.Fatalf("selection: %s %v", got, err)
 	}
 	got, err = selectEncoder(context.Background(), "darwin", func(string) error { return operation.ErrProcessFailed })
 	if err != nil || got != "libx264" {
 		t.Fatal("unavailable hardware must use CPU")
 	}
-	_, err = selectEncoder(context.Background(), "windows", func(string) error { return ErrInsufficientDisk })
+	_, err = selectEncoder(context.Background(), "darwin", func(string) error { return ErrInsufficientDisk })
 	if !errors.Is(err, ErrInsufficientDisk) {
 		t.Fatal("disk failure hidden by fallback")
 	}
@@ -124,14 +121,43 @@ func TestNativeAutoPrepareAlignedPackage(t *testing.T) {
 	if data, err := exec.CommandContext(ctx, ffmpeg, "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=1920x1080:r=30", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "35", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "flac", source).CombinedOutput(); err != nil {
 		t.Fatalf("fixture: %v %s", err, data)
 	}
-	value, err := PrepareAuto(ctx, source, filepath.Join(parent, "output"), ffmpeg, ffprobe, DefaultEncodeOptions(), nil)
+	original, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noNVENC := runtime.GOOS == "windows" && os.Getenv("HHC_TEST_NO_NVENC") == "1"
+	options := DefaultEncodeOptions()
+	options.Progress = func(p EncodingProgress) {
+		if noNVENC && p.Encoder != "h264_nvenc" {
+			t.Errorf("unexpected fallback: %s", p.Encoder)
+		}
+	}
+	value, err := PrepareAuto(ctx, source, filepath.Join(parent, "output"), ffmpeg, ffprobe, options, nil)
+	if noNVENC {
+		var failure *PreparationFailure
+		if !errors.As(err, &failure) || failure.Stage != "encode_nvenc" || !errors.Is(err, operation.ErrProcessFailed) || value.CPUFallback {
+			t.Fatalf("runner without NVIDIA must fail at NVENC, never fallback: %v %+v", err, value.EncodingSummary)
+		}
+		after, readErr := os.ReadFile(source)
+		if readErr != nil || sha256.Sum256(after) != sha256.Sum256(original) {
+			t.Fatal("changed source")
+		}
+		if _, statErr := os.Stat(filepath.Join(parent, "output")); !os.IsNotExist(statErr) {
+			t.Fatal("failed encode finalized output")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(value.Inventory.Renditions) != 2 || value.ActualEncoder == "" {
 		t.Fatal("incomplete auto package")
 	}
-	if os.Getenv("HHC_REQUIRE_HARDWARE") == "1" && value.ActualEncoder != "h264_videotoolbox" {
+	expected := "h264_videotoolbox"
+	if runtime.GOOS == "windows" {
+		expected = "h264_nvenc"
+	}
+	if os.Getenv("HHC_REQUIRE_HARDWARE") == "1" && value.ActualEncoder != expected {
 		t.Fatalf("expected actual hardware: %s", value.ActualEncoder)
 	}
 	if _, err := ReadPackage(ctx, value.OutputPath); err != nil {
