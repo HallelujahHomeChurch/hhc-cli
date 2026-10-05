@@ -40,13 +40,24 @@ verify_hash() {
   else printf '%s  %s\n' "$1" "$2" | shasum -a 256 -c -; fi
 }
 fetch_verified() {
-  fetch "$1" "$3" || return 1
-  if verify_hash "$2" "$1"; then return 0; fi
+  if fetch "$1" "$3" && verify_hash "$2" "$1"; then return 0; fi
   # Some upstream edge responses are HTTP 200 HTML rather than archive bytes.
   # Try the official download variant once; the original digest still gates tar.
-  printf 'Primary source checksum failed; trying official download variant.\n' >&2
+  printf 'Primary source unavailable or invalid; trying official download variant.\n' >&2
   fetch "$1" "$4" || return 1
   verify_hash "$2" "$1"
+}
+fetch_x264_source() {
+  local source_sha=6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224
+  local source_url=https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2
+  if fetch_verified "$1" "$source_sha" "$source_url" "${source_url}?inline=false"; then return 0; fi
+  # Recover corresponding source bytes only, never execute prior bundle binaries.
+  # The fixed outer digest was verified against the signed v1.0.6 release.
+  local recovery_archive="${1}.v1.0.6.tar.gz"
+  fetch "$recovery_archive" https://github.com/HallelujahHomeChurch/hhc-cli/releases/download/v1.0.6/hhc_1.0.6_darwin_arm64.tar.gz || return 1
+  verify_hash b07ac21a558ee1cbf6f70f14f2e8d4f740e2c6eca464de8d964e5bc864c6dd66 "$recovery_archive" || return 1
+  tar -xOf "$recovery_archive" source/x264.tar.bz2 > "$1" || return 1
+  verify_hash "$source_sha" "$1"
 }
 
 fetch sources/ffmpeg.tar.xz https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz
@@ -56,9 +67,7 @@ fetch sources/ffmpeg-devel.asc https://ffmpeg.org/ffmpeg-devel.asc
 gpg --homedir "$media_build/gpg" --batch --import sources/ffmpeg-devel.asc
 gpg --homedir "$media_build/gpg" --batch --status-fd 1 --verify sources/ffmpeg.tar.xz.asc sources/ffmpeg.tar.xz |
   grep -F '[GNUPG:] VALIDSIG FCF986EA15E6E293A5644F10B4322F04D67658D8 '
-fetch_verified sources/x264.tar.bz2 6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224 \
-  https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2 \
-  'https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2?inline=false'
+fetch_x264_source sources/x264.tar.bz2
 tar -xf sources/ffmpeg.tar.xz
 tar -xf sources/x264.tar.bz2
 
