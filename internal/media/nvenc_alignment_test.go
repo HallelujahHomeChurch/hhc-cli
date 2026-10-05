@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -75,7 +76,7 @@ func TestNVENCReorderSettingKeepsLongFractionalMKVAligned(t *testing.T) {
 	}
 	measured, err := MeasureRendition(ctx, ffprobe, output, r)
 	if err != nil {
-		t.Fatalf("long fractional MKV rejected with NVENC reorder setting: %v", err)
+		t.Fatalf("long fractional MKV rejected with NVENC reorder setting: %v; cause=%v", err, errors.Unwrap(err))
 	}
 	if len(measured.SegmentBytes) < 38 {
 		t.Fatal("fixture did not reach the reported segment 36")

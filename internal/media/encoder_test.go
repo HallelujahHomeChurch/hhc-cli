@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -184,7 +185,7 @@ func testCPUEncodeAligned(t *testing.T, fps int) {
 		}
 		actual, err := MeasureRendition(ctx, ffprobe, output, r)
 		if err != nil || len(actual.SegmentBytes) != 3 || actual.SegmentDurations[0] != 30 || actual.Codecs == "" {
-			t.Fatalf("bounded encoded measurement: %+v %v", actual, err)
+			t.Fatalf("bounded encoded measurement: %+v %v; cause=%v", actual, err, errors.Unwrap(err))
 		}
 		wrongDuration := r
 		wrongDuration.DurationSeconds += 0.75
