@@ -12,10 +12,12 @@ detection and network input. x264 is statically linked into the separate
 FFmpeg programs. `--enable-nonfree` is never used. macOS may link Apple system
 frameworks; Windows must not depend on a separately installed MinGW runtime.
 
-If the x264 archive endpoint returns bytes that fail its pinned checksum, the
-recipe tries the official `?inline=false` download variant once. It requires
-the same SHA-256 before extraction; neither a challenge page nor a changed
-archive is accepted. A blocked official fallback still fails the build closed.
+The primary x264 archive and official `?inline=false` variant remain preferred.
+If both are unavailable or invalid, the recipe downloads the fixed v1.0.6 macOS
+release bundle, verifies its pinned outer SHA-256, and extracts only
+`source/x264.tar.bz2` to stdout. The unchanged source SHA-256 still gates
+extraction/build. No prior executables run, source/version changes, challenge
+solving or unverified mirror is allowed; failed verification stops the build.
 
 The `bundle` output includes binaries, license texts, exact upstream source
 archives and the build recipe/configuration. Distribute these together, not
