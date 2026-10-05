@@ -57,6 +57,16 @@ func TestSignPackageBindsRequestedObjectsAndRedactsCapabilities(t *testing.T) {
 	}
 }
 
+func TestSign480PackageObject(t *testing.T) {
+ const pkg="0123456789abcdef0123456789abcdef"
+ client,_:=apiFixture(t,func(w http.ResponseWriter,r *http.Request){
+  w.Header().Set("Content-Type","application/json")
+  fmt.Fprint(w,`{"data":[{"path":"480p/init.mp4","url":"https://fixture.invalid/private-secret","method":"PUT","headers":{"Content-Type":["application/octet-stream"]}}]}`)
+ },false,"cms:recordings:write")
+ value,err:=client.SignPackage(context.Background(),recordingID,pkg,[]string{"480p/init.mp4"})
+ if err!=nil||len(value)!=1||value[0].Path!="480p/init.mp4" {t.Fatalf("480 sign: %v",err)}
+}
+
 func TestPublishKeepsOriginalPreconditionAndReportsManualUnpublish(t *testing.T) {
 	client, _ := apiFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/api/admin/recordings/"+recordingID+"/publish" || r.Header.Get("If-Match") != `"4"` || r.Header.Get("Idempotency-Key") != "operation:publish" {

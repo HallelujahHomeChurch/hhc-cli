@@ -13,7 +13,7 @@ func TestSourceProbeFeedsBoundedNoUpscalePlan(t *testing.T) {
 		t.Fatalf("source=%+v err=%v", source, err)
 	}
 	plan, err := PlanSource(source, DefaultEncodeOptions())
-	if err != nil || len(plan.Renditions) != 2 || plan.Renditions[0].FrameRate != 30 {
+	if err != nil || len(plan.Renditions) != 3 || plan.Renditions[0].FrameRate != 30 {
 		t.Fatalf("plan=%+v err=%v", plan, err)
 	}
 	for _, tc := range []struct{ old, replacement string }{

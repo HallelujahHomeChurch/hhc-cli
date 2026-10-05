@@ -150,7 +150,7 @@ func TestNativeAutoPrepareAlignedPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(value.Inventory.Renditions) != 2 || value.ActualEncoder == "" {
+	if len(value.Inventory.Renditions) != 3 || value.ActualEncoder == "" {
 		t.Fatal("incomplete auto package")
 	}
 	expected := "h264_videotoolbox"

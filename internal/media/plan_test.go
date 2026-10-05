@@ -11,7 +11,7 @@ func TestPreparePlanPreservesSourceAspectAndDoesNotUpscale(t *testing.T) {
 		fps                        float64
 		count, lowWidth, lowHeight int
 	}{
-		{1920, 1080, 60, 2, 1280, 720}, {640, 360, 24, 1, 640, 360}, {1080, 1920, 30, 2, 404, 720},
+		{1920, 1080, 60, 3, 1280, 720}, {640, 360, 24, 1, 640, 360}, {1080, 1920, 30, 3, 404, 720},
 	} {
 		plan, err := PlanSource(SourceInfo{Width: test.width, Height: test.height, SampleAspectRatio: 1, FrameRate: test.fps, DurationSeconds: 65, HasAudio: true}, DefaultEncodeOptions())
 		if err != nil {
@@ -48,7 +48,7 @@ func TestPreparePlanRejectsUnsupportedSourceAndBudget(t *testing.T) {
 		t.Fatal("accepted high rendition below low bitrate")
 	}
 	near := base
-	near.DurationSeconds = 15000
+	near.DurationSeconds = 13000
 	plan, err := PlanSource(near, DefaultEncodeOptions())
 	if err != nil || !plan.NearCapacity {
 		t.Fatalf("missing 9GB capacity warning: %+v %v", plan, err)

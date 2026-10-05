@@ -20,13 +20,13 @@ type RenditionMedia struct {
 var recordingCodecs = regexp.MustCompile(`^avc1\.[0-9a-fA-F]{6},mp4a\.40\.2$`)
 
 func BuildMasterPlaylist(media []RenditionMedia) ([]byte, error) {
-	if len(media) < 1 || len(media) > 2 {
+	if len(media) < 1 || len(media) > 3 {
 		return nil, ErrInvalidInput
 	}
 	media = slices.Clone(media)
-	slices.SortFunc(media, func(a, b RenditionMedia) int { return strings.Compare(b.Rendition.Name, a.Rendition.Name) })
+	slices.SortFunc(media, func(a, b RenditionMedia) int { return a.Rendition.Height - b.Rendition.Height })
 	low := media[0].Rendition
-	if low.Name != "720p" {
+	if !slices.ContainsFunc(media, func(m RenditionMedia) bool { return m.Rendition.Name == "720p" }) {
 		return nil, ErrInvalidInput
 	}
 	var master strings.Builder
@@ -36,7 +36,7 @@ func BuildMasterPlaylist(media []RenditionMedia) ([]byte, error) {
 		if !validRecordingRendition(r) || !recordingCodecs.MatchString(m.Codecs) || len(m.SegmentBytes) != r.SegmentCount || math.IsNaN(m.StartSeconds) || math.IsInf(m.StartSeconds, 0) {
 			return nil, ErrInvalidInput
 		}
-		if n > 0 && (r.Name != "1080p" || r.Height <= low.Height || r.VideoBitrate < low.VideoBitrate || r.FrameRate != low.FrameRate || math.Abs(r.DurationSeconds-low.DurationSeconds) > 1/low.FrameRate+0.001 || math.Abs(m.StartSeconds-media[0].StartSeconds) > 1/low.FrameRate+0.001) {
+		if n > 0 && (r.Name == "480p" || media[n-1].Rendition.Name == "1080p" || r.Height <= media[n-1].Rendition.Height || r.VideoBitrate < media[n-1].Rendition.VideoBitrate || r.FrameRate != low.FrameRate || math.Abs(r.DurationSeconds-low.DurationSeconds) > 1/low.FrameRate+0.001 || math.Abs(m.StartSeconds-media[0].StartSeconds) > 1/low.FrameRate+0.001) {
 			return nil, ErrInvalidInput
 		}
 		peak, average, err := RecordingPlaylistBitrates(m.SegmentBytes, m.SegmentDurations, m.TargetDuration)

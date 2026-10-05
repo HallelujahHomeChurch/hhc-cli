@@ -60,7 +60,7 @@ func ReadPackage(ctx context.Context, directory string) (RecordingPackageInvento
 }
 
 func buildPackageInventory(ctx context.Context, directory string, renditions []RecordingRendition, presetVersion string, manifest bool) (RecordingPackageInventory, error) {
-	if !filepath.IsAbs(directory) || len(renditions) < 1 || len(renditions) > 2 || !presetVersionPattern.MatchString(presetVersion) {
+	if !filepath.IsAbs(directory) || len(renditions) < 1 || len(renditions) > 3 || !presetVersionPattern.MatchString(presetVersion) {
 		return RecordingPackageInventory{}, ErrInvalidInput
 	}
 	allowedDirs := map[string]bool{}

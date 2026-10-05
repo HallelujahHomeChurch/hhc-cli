@@ -44,7 +44,7 @@ func transferFixture(t *testing.T) (*os.File, media.RecordingPackageObject, Sign
 	}
 	t.Cleanup(func() { f.Close() })
 	hash := sha256.Sum256(content)
-	object := media.RecordingPackageObject{Path: "720p/seg-000000.m4s", SizeBytes: int64(len(content)), SHA256: hex.EncodeToString(hash[:])}
+	object := media.RecordingPackageObject{Path: "480p/seg-000000.m4s", SizeBytes: int64(len(content)), SHA256: hex.EncodeToString(hash[:])}
 	query := url.Values{"X-Amz-Date": {time.Now().UTC().Format("20060102T150405Z")}, "X-Amz-Expires": {"900"}, "X-Amz-SignedHeaders": {"content-length;content-type;host"}, "X-Amz-Signature": {strings.Repeat("a", 64)}}
 	target := SignedObject{Path: object.Path, Method: "PUT", URL: "https://" + strings.Repeat("a", 32) + ".r2.cloudflarestorage.com/test-bucket/recordings/packages/" + strings.Repeat("b", 32) + "/staging/" + object.Path + "?" + query.Encode(), Headers: http.Header{"Content-Type": {"video/mp4"}, "Content-Length": {"21"}}}
 	return f, object, target

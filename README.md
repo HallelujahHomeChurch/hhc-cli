@@ -166,6 +166,14 @@ The approved target is Windows amd64 and macOS arm64, bundled FFmpeg, local HLS
 preparation, human/service login, resumable direct upload, explicit publication
 and signed manual updates. Original recordings are never deleted by the CLI.
 
+Preparation shares one source decode across simultaneous HLS outputs: 480p
+(800 kbps video), 720p (1.5 Mbps), and 1080p (3 Mbps), each with 128 kbps AAC
+and 30-second segments. Lower-resolution sources are never upscaled; duplicate
+sizes are omitted. Existing two-quality packages remain resumable. Progress
+reports the combined output names, such as `720p+1080p+480p`, in one bar.
+The package limit remains 10 GB. Multi-output encoding avoids repeated source
+decoding but does not promise a GPU speedup; real-device throughput varies.
+
 Windows preparation uses NVIDIA NVENC directly, without hardware-selection
 probes or any QSV/AMF/CPU fallback. Unsupported devices, drivers or settings stop
 the operation at `encode_nvenc`; retain its operation ID and resume after fixing
@@ -182,7 +190,7 @@ long fractional-rate mux path, not real NVIDIA output or the user's source.
 macOS probes VideoToolbox and falls back to libx264 medium. A macOS hardware encode may
 restart on CPU once only after an independent synthetic probe also fails;
 source corruption, cancellation, disk pressure, and cleanup failures do not
-trigger this restart. The operation deadline never resets. Both renditions are
+trigger this restart. The operation deadline never resets. All renditions are
 regenerated together, never mixed across encoders. VideoToolbox disables B-frame
 reordering to meet the same strict fMP4 timing validation as the server.
 

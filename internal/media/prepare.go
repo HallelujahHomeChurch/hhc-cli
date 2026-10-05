@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
@@ -291,23 +292,28 @@ func prepare(ctx context.Context, source, output, ffmpeg, ffprobe string, option
 }
 
 func encodeRenditions(ctx context.Context, source, staging, ffmpeg, ffprobe string, renditions []RecordingRendition, encoder string, progress func(EncodingProgress)) ([]RenditionMedia, error) {
-	var measured []RenditionMedia
+	args, err := multiEncodeArguments(source, staging, renditions, encoder)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(renditions))
 	for _, r := range renditions {
 		directory := filepath.Join(staging, r.Name)
 		if err := os.Mkdir(directory, 0700); err != nil {
 			return nil, err
 		}
-		args, err := encodeArguments(source, directory, r, encoder)
-		if err != nil {
-			return nil, err
+		names = append(names, r.Name)
+	}
+	if err := operation.RunMediaTool(ctx, ffmpeg, args, func(p operation.MediaProgress) {
+		if progress != nil {
+			progress(EncodingProgress{Rendition: strings.Join(names, "+"), Encoder: encoder, Fraction: min(1, p.Elapsed.Seconds()/renditions[0].DurationSeconds), Speed: p.Speed})
 		}
-		if err := operation.RunMediaTool(ctx, ffmpeg, args, func(p operation.MediaProgress) {
-			if progress != nil {
-				progress(EncodingProgress{Rendition: r.Name, Encoder: encoder, Fraction: min(1, p.Elapsed.Seconds()/r.DurationSeconds), Speed: p.Speed})
-			}
-		}); err != nil {
-			return nil, err
-		}
+	}); err != nil {
+		return nil, err
+	}
+	var measured []RenditionMedia
+	for _, r := range renditions {
+		directory := filepath.Join(staging, r.Name)
 		actual, err := MeasureRendition(ctx, ffprobe, directory, r)
 		if err != nil {
 			return nil, err

@@ -18,7 +18,7 @@ import (
 
 var packageIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var operationKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
-var objectPathPattern = regexp.MustCompile(`^(master\.m3u8|(720p|1080p)/(index\.m3u8|init\.mp4|seg-[0-9]{6}\.m4s))$`)
+var objectPathPattern = regexp.MustCompile(`^(master\.m3u8|(480p|720p|1080p)/(index\.m3u8|init\.mp4|seg-[0-9]{6}\.m4s))$`)
 
 type PublishReceipt struct {
 	OperationKey     string    `json:"operationKey"`

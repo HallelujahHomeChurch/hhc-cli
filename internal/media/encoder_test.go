@@ -297,7 +297,7 @@ func testCPUEncodeAligned(t *testing.T, fps int) {
 		}
 		run(ffmpeg, "-v", "error", "-nostdin", "-i", playlistPath, "-f", "null", "-")
 	}
-	if len(starts) != 2 || math.Abs(starts[0]-starts[1]) > 0.001 {
+	if len(starts) != 3 || math.Abs(starts[0]-starts[1]) > 0.001 || math.Abs(starts[0]-starts[2]) > 0.001 {
 		t.Fatalf("renditions start differently %v", starts)
 	}
 	master, err := BuildMasterPlaylist(measured)
@@ -308,7 +308,7 @@ func testCPUEncodeAligned(t *testing.T, fps int) {
 		t.Fatal(err)
 	}
 	inv, err := BuildPackageInventory(ctx, packageDir, plan.Renditions, "cpu-hq-v1")
-	if err != nil || len(inv.Objects) != 11 || inv.InventoryDigest == "" {
+	if err != nil || len(inv.Objects) != 16 || inv.InventoryDigest == "" {
 		t.Fatalf("actual HLS closure: %+v %v", inv, err)
 	}
 	after, err := os.ReadFile(source)
