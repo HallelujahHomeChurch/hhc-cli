@@ -28,6 +28,21 @@ func TestPackageControlRejectsUnboundOrIncompleteReady(t *testing.T) {
 	}
 }
 
+func TestPackageControlAcceptsAuthoritativeRetentionWithoutResettingUpload(t *testing.T) {
+	const pkg = "0123456789abcdef0123456789abcdef"
+	uploaded := time.Now().UTC().Add(-time.Hour)
+	ready := uploaded.Add(30 * time.Minute)
+	for _, days := range []int{1, 14, 30, 60, 365} {
+		client, _ := apiFixture(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"packageId": pkg, "sessionId": pkg, "recordingId": recordingID, "state": "ready", "expiresAt": uploaded.Add(time.Hour), "uploadedAt": uploaded, "readyAt": ready, "mediaExpiresAt": uploaded.Add(time.Duration(days) * 24 * time.Hour), "retentionRevision": 2}})
+		}, false)
+		if _, err := client.PackageStatus(context.Background(), recordingID, pkg, ""); err != nil {
+			t.Fatalf("%d days rejected: %v", days, err)
+		}
+	}
+}
+
 func TestSignPackageBindsRequestedObjectsAndRedactsCapabilities(t *testing.T) {
 	const pkg = "0123456789abcdef0123456789abcdef"
 	for _, path := range []string{"master.m3u8", "720p/index.m3u8"} {
@@ -54,6 +69,18 @@ func TestSignPackageBindsRequestedObjectsAndRedactsCapabilities(t *testing.T) {
 				t.Fatal("capability leaked")
 			}
 		})
+	}
+}
+
+func TestSign480PackageObject(t *testing.T) {
+	const pkg = "0123456789abcdef0123456789abcdef"
+	client, _ := apiFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"path":"480p/init.mp4","url":"https://fixture.invalid/private-secret","method":"PUT","headers":{"Content-Type":["application/octet-stream"]}}]}`)
+	}, false, "cms:recordings:write")
+	value, err := client.SignPackage(context.Background(), recordingID, pkg, []string{"480p/init.mp4"})
+	if err != nil || len(value) != 1 || value[0].Path != "480p/init.mp4" {
+		t.Fatalf("480 sign: %v", err)
 	}
 }
 

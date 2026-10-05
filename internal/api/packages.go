@@ -18,7 +18,7 @@ import (
 
 var packageIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var operationKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,128}$`)
-var objectPathPattern = regexp.MustCompile(`^(master\.m3u8|(720p|1080p)/(index\.m3u8|init\.mp4|seg-[0-9]{6}\.m4s))$`)
+var objectPathPattern = regexp.MustCompile(`^(master\.m3u8|(480p|720p|1080p)/(index\.m3u8|init\.mp4|seg-[0-9]{6}\.m4s))$`)
 
 type PublishReceipt struct {
 	OperationKey     string    `json:"operationKey"`
@@ -102,16 +102,18 @@ func (c *Client) SignPackage(ctx context.Context, recordingID, packageID string,
 
 // Package state is authoritative only when returned by the server, never from a PUT.
 type Package struct {
-	PackageID        string                          `json:"packageId"`
-	SessionID        string                          `json:"sessionId"`
-	RecordingID      string                          `json:"recordingId"`
-	State            string                          `json:"state"`
-	ExpiresAt        time.Time                       `json:"expiresAt"`
-	ReadyAt          *time.Time                      `json:"readyAt,omitempty"`
-	MediaExpiresAt   *time.Time                      `json:"mediaExpiresAt,omitempty"`
-	Inventory        media.RecordingPackageInventory `json:"inventory"`
-	ConfirmedObjects []string                        `json:"confirmedObjects"`
-	NextCursor       string                          `json:"nextCursor"`
+	PackageID         string                          `json:"packageId"`
+	SessionID         string                          `json:"sessionId"`
+	RecordingID       string                          `json:"recordingId"`
+	State             string                          `json:"state"`
+	ExpiresAt         time.Time                       `json:"expiresAt"`
+	ReadyAt           *time.Time                      `json:"readyAt,omitempty"`
+	UploadedAt        *time.Time                      `json:"uploadedAt,omitempty"`
+	RetentionRevision int64                           `json:"retentionRevision,omitempty"`
+	MediaExpiresAt    *time.Time                      `json:"mediaExpiresAt,omitempty"`
+	Inventory         media.RecordingPackageInventory `json:"inventory"`
+	ConfirmedObjects  []string                        `json:"confirmedObjects"`
+	NextCursor        string                          `json:"nextCursor"`
 }
 
 func (c *Client) CreateRecording(ctx context.Context, title, key string) (Recording, error) {
@@ -191,5 +193,16 @@ func validPackage(value Package, recordingID, packageID string) bool {
 	if !packageIDPattern.MatchString(packageID) || value.PackageID != packageID || value.SessionID != packageID || value.RecordingID != recordingID || value.ExpiresAt.IsZero() || !slices.Contains([]string{"uploading", "freezing", "validating", "ready", "failed", "expired"}, value.State) {
 		return false
 	}
-	return value.State != "ready" || value.ReadyAt != nil && !value.ReadyAt.IsZero() && value.MediaExpiresAt != nil && value.MediaExpiresAt.Equal(value.ReadyAt.Add(30*24*time.Hour))
+	if value.State != "ready" {
+		return true
+	}
+	if value.ReadyAt == nil || value.ReadyAt.IsZero() || value.MediaExpiresAt == nil {
+		return false
+	}
+	if value.UploadedAt == nil {
+		// Backward-compatible response from a server before dynamic retention.
+		return value.RetentionRevision == 0 && value.MediaExpiresAt.Equal(value.ReadyAt.Add(30*24*time.Hour))
+	}
+	return value.RetentionRevision > 0 && !value.UploadedAt.IsZero() && !value.UploadedAt.After(*value.ReadyAt) &&
+		!value.MediaExpiresAt.Before(value.UploadedAt.Add(24*time.Hour)) && !value.MediaExpiresAt.After(value.UploadedAt.Add(365*24*time.Hour))
 }

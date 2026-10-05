@@ -76,6 +76,8 @@ func validRecordingRendition(r RecordingRendition) bool {
 	maxWidth, maxHeight := 1280, 720
 	if r.Name == "1080p" {
 		maxWidth, maxHeight = 1920, 1080
+	} else if r.Name == "480p" {
+		maxWidth, maxHeight = 854, 480
 	} else if r.Name != "720p" {
 		return false
 	}

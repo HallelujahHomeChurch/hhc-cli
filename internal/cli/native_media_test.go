@@ -146,7 +146,7 @@ func TestNativeStandalonePrepareWithVerifiedFixtureBundle(t *testing.T) {
 				Type, OperationID, Encoder, Rendition string
 				Fraction                              float64
 			}
-			if json.NewDecoder(&diagnostics).Decode(&progress) != nil || progress.Type != "encoding_progress" || progress.OperationID != id || !slices.Contains([]string{"libx264", "h264_videotoolbox", "h264_nvenc"}, progress.Encoder) || runtime.GOOS == "windows" && progress.Encoder != "h264_nvenc" || progress.Rendition != "720p" || progress.Fraction < 0 || progress.Fraction > 1 {
+			if json.NewDecoder(&diagnostics).Decode(&progress) != nil || progress.Type != "encoding_progress" || progress.OperationID != id || !slices.Contains([]string{"libx264", "h264_videotoolbox", "h264_nvenc"}, progress.Encoder) || runtime.GOOS == "windows" && progress.Encoder != "h264_nvenc" || progress.Rendition != "720p+480p" || progress.Fraction < 0 || progress.Fraction > 1 {
 				t.Fatal("missing separate structured stderr progress")
 			}
 		}

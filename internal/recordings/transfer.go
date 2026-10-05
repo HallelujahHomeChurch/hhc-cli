@@ -23,7 +23,7 @@ var (
 	ErrPackageChanged      = errors.New("package_changed")
 	r2Host                 = regexp.MustCompile(`^[a-f0-9]{32}\.r2\.cloudflarestorage\.com$`)
 	packageIDPattern       = regexp.MustCompile(`^[a-f0-9]{32}$`)
-	objectPathPattern      = regexp.MustCompile(`^(master\.m3u8|(720p|1080p)/(index\.m3u8|init\.mp4|seg-[0-9]{6}\.m4s))$`)
+	objectPathPattern      = regexp.MustCompile(`^(master\.m3u8|(480p|720p|1080p)/(index\.m3u8|init\.mp4|seg-[0-9]{6}\.m4s))$`)
 )
 
 // SignedObject is an ephemeral wire capability, never a journal/output value.

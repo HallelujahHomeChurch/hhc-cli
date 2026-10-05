@@ -79,11 +79,11 @@ func TestPrepareCPUPreservesSourceAndAtomicallyCreatesPackage(t *testing.T) {
 	progress := make(map[string]float64)
 	options.Progress = func(p EncodingProgress) { progress[p.Rendition] = p.Fraction }
 	value, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, options, nil)
-	if err != nil || len(value.Inventory.Renditions) != 2 || value.SourceFingerprint.SHA256 != fmt.Sprintf("%x", hash) || value.ActualEncoder != "libx264" {
+	if err != nil || len(value.Inventory.Renditions) != 3 || value.SourceFingerprint.SHA256 != fmt.Sprintf("%x", hash) || value.ActualEncoder != "libx264" {
 		t.Fatalf("prepare: %+v %v", value, err)
 	}
-	if progress["720p"] < .99 || progress["1080p"] < .99 {
-		t.Fatalf("did not stream both renditions' progress: %+v", progress)
+	if progress["720p+1080p+480p"] < .99 {
+		t.Fatalf("did not stream shared encoding progress: %+v", progress)
 	}
 	verified, err := ReadPackage(ctx, output)
 	if err != nil || verified.InventoryDigest != value.Inventory.InventoryDigest {
