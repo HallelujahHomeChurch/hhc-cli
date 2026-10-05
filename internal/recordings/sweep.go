@@ -58,6 +58,15 @@ func SweepExpired(base string, now time.Time) (report SweepResult, err error) {
 					}
 				}
 			}
+			if state.Cover != nil && expired {
+				if _, statErr := j.root.Lstat("cover.snapshot"); !errors.Is(statErr, os.ErrNotExist) {
+					if err := j.cleanCover(); err != nil {
+						report.Failed++
+					} else {
+						report.Removed++
+					}
+				}
+			}
 			j.Close()
 		}
 		if readErr == io.EOF {

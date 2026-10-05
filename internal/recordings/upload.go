@@ -23,6 +23,8 @@ type TransferProgress struct {
 }
 
 type UploadResult struct {
+	CoverState               string                   `json:"coverState"`
+	CoverID                  string                   `json:"coverId,omitempty"`
 	OperationID              string                   `json:"operationId"`
 	Package                  api.Package              `json:"-"`
 	Publication              *api.PublishResult       `json:"publication,omitempty"`
@@ -52,6 +54,10 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 	}
 	state := j.State()
 	result := UploadResult{OperationID: state.OperationID, PrepareState: "not_applicable", TransferState: "unknown", ValidationState: "unknown", PublicationState: "unknown", LocalCleanupState: "not_applicable"}
+	result.CoverState = "not_requested"
+	if state.Intent.CoverPath != "" {
+		result.CoverState = "pending"
+	}
 	p := c.Principal()
 	if state.Intent.Command != "upload" || p.Type != state.Intent.PrincipalType || p.ID != state.Intent.PrincipalID || p.ClientID != state.Intent.ClientID {
 		return result, ErrOperationConflict
@@ -63,8 +69,15 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 	if err := c.RequireScopes(scopes...); err != nil {
 		return result, err
 	}
-	if state.Intent.Prepare {
-		result.PrepareState, result.LocalCleanupState = "pending", "pending"
+	if err := SnapshotCover(j); err != nil {
+		result.CoverState = "failed"
+		return result, err
+	}
+	state = j.State()
+	if state.Intent.Prepare || state.Intent.CoverPath != "" {
+		if state.Intent.Prepare {
+			result.PrepareState, result.LocalCleanupState = "pending", "pending"
+		}
 		result.RecordingID, result.PackageID, result.PackageDigest, result.SizeBytes = state.RecordingID, state.PackageID, state.PackageDigest, state.PackageBytes
 		if state.SourceFingerprint.SHA256 != "" {
 			result.SourceFingerprint = &state.SourceFingerprint
@@ -292,6 +305,20 @@ func finishReady(ctx context.Context, c *api.Client, j *Journal, result UploadRe
 		}
 		zero := int64(0)
 		result.LocalCleanupState, result.CleanupBytesRemaining = "complete", &zero
+	}
+	if err := CompleteCover(ctx, c, j); err != nil {
+		result.CoverState = "failed"
+		if j.state.Cover != nil {
+			result.CoverState = j.state.Cover.State
+		}
+		return result, err
+	}
+	result.CoverState = "not_requested"
+	if j.state.Cover != nil {
+		result.CoverState = j.state.Cover.State
+		if j.state.Cover.Receipt != nil {
+			result.CoverID = j.state.Cover.Receipt.CoverID
+		}
 	}
 	if j.state.Intent.Publish {
 		published, err := Publish(ctx, c, j)

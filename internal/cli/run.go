@@ -92,7 +92,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 	}
 	var flags []string
 	var recordingID string
-	var recordingInput, recordingOutput, operationID, title string
+	var recordingInput, recordingOutput, operationID, title, coverPath string
 	var publish, prepare bool
 	var explicitProfile, noninteractive bool
 	timeout := 4 * time.Hour
@@ -156,6 +156,7 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 		fs.StringVar(&operationID, "operation-id", "", "")
 		fs.BoolVar(&publish, "publish", false, "")
 		fs.BoolVar(&prepare, "prepare", false, "")
+		fs.StringVar(&coverPath, "cover", "", "")
 	}
 	if r.Command == "recordings publish" {
 		fs.StringVar(&operationID, "operation-id", "", "")
@@ -203,12 +204,13 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 			bundleVersion = tools.Version
 		}
 		r.Data = struct {
-			Version       string `json:"version"`
-			Platform      string `json:"platform"`
-			JournalSchema int    `json:"journalSchema"`
-			SkillVersion  string `json:"skillVersion"`
-			BundleVersion string `json:"bundleVersion,omitempty"`
-		}{version, runtime.GOOS + "/" + runtime.GOARCH, 1, version, bundleVersion}
+			Version                 string `json:"version"`
+			Platform                string `json:"platform"`
+			JournalSchema           int    `json:"journalSchema"`
+			SupportedJournalSchemas []int  `json:"supportedJournalSchemas"`
+			SkillVersion            string `json:"skillVersion"`
+			BundleVersion           string `json:"bundleVersion,omitempty"`
+		}{version, runtime.GOOS + "/" + runtime.GOARCH, 1, []int{1, 2}, version, bundleVersion}
 		return finish(nil)
 	}
 	if r.Command == "recordings upload" || r.Command == "recordings resume" || r.Command == "recordings publish" || r.Command == "recordings prepare" {
@@ -342,6 +344,12 @@ func Run(ctx context.Context, args []string, input *os.File, output, diagnostics
 				return finish(auth.ErrInvalidAuthInput)
 			}
 			intent = &recordings.Intent{Command: "upload", Profile: profile, PrincipalType: principal.Type, PrincipalID: principal.ID, ClientID: principal.ClientID, Input: path, Title: strings.TrimSpace(title), Publish: publish}
+			if coverPath != "" {
+				intent.CoverPath, err = filepath.Abs(coverPath)
+				if err != nil {
+					return finish(auth.ErrInvalidAuthInput)
+				}
+			}
 			if prepare {
 				options := media.DefaultEncodeOptions()
 				intent.Prepare, intent.VideoBitrate720, intent.VideoBitrate1080 = true, options.VideoBitrate720, options.VideoBitrate1080
@@ -566,6 +574,16 @@ func classifyCause(err error) (string, string, int, bool) {
 		return "invalid_input", "參數無效；請使用 hhc --help。", 2, false
 	case errors.Is(err, media.ErrInvalidInput), errors.Is(err, recordings.ErrInvalidJournal):
 		return "invalid_input", "套件或操作紀錄無效，未確認完成。", 2, false
+	case errors.Is(err, recordings.ErrCoverInput):
+		return "cover_input_invalid", recordings.ErrCoverInput.Error(), 2, false
+	case errors.Is(err, recordings.ErrCoverOrientation):
+		return "cover_normalization_required", recordings.ErrCoverOrientation.Error(), 2, false
+	case errors.Is(err, recordings.ErrCoverFailed):
+		var coverFailure *recordings.CoverProcessingError
+		if errors.As(err, &coverFailure) {
+			return "cover_processing_failed", coverFailure.Error(), 5, false
+		}
+		return "cover_processing_failed", "封面處理失敗，影片未發布。", 5, false
 	case errors.Is(err, recordings.ErrOperationConflict), errors.Is(err, recordings.ErrPackageChanged):
 		return "operation_conflict", "操作身分、內容或狀態已變更，請檢查原操作。", 5, false
 	case errors.Is(err, recordings.ErrSessionExpired):
