@@ -31,6 +31,9 @@ func Publish(ctx context.Context, c *api.Client, j *Journal) (api.PublishResult,
 		}
 		state.PackageID = r.PackageID
 		state.PublishExpectedVersion = r.Version
+		if state.Cover != nil && state.Cover.Receipt != nil && r.Version != state.Cover.Receipt.RecordingVersion {
+			return api.PublishResult{}, ErrOperationConflict
+		}
 		if err := j.Save(state); err != nil {
 			return api.PublishResult{}, err
 		}

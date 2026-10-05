@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,11 +24,13 @@ var (
 	ErrInvalidJournal    = errors.New("invalid_journal")
 	ErrJournalSchema     = errors.New("unsupported_journal_schema")
 	uuidPattern          = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
+	coverDigestPattern   = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
 
 // Intent is fixed before the first remote mutation. It contains no credentials,
 // signed capabilities or server-derived permission claims.
 type Intent struct {
+	CoverPath        string `json:"coverPath,omitempty"`
 	Command          string `json:"command"`
 	Profile          string `json:"profile"`
 	PrincipalType    string `json:"principalType"`
@@ -44,6 +47,7 @@ type Intent struct {
 }
 
 type JournalState struct {
+	Cover                  *CoverState             `json:"cover,omitempty"`
 	SchemaVersion          int                     `json:"schemaVersion"`
 	OperationID            string                  `json:"operationId"`
 	Intent                 Intent                  `json:"intent"`
@@ -112,6 +116,9 @@ func OpenJournal(base, id string, intent *Intent) (*Journal, error) {
 			return fail(err)
 		}
 		j.state = JournalState{SchemaVersion: 1, OperationID: id, Intent: *intent}
+		if intent.CoverPath != "" {
+			j.state.SchemaVersion = 2
+		}
 		if err := j.Save(j.state); err != nil {
 			return fail(err)
 		}
@@ -135,7 +142,7 @@ func OpenJournal(base, id string, intent *Intent) (*Journal, error) {
 	if json.Unmarshal(data, &version) != nil {
 		return fail(ErrInvalidJournal)
 	}
-	if version.SchemaVersion != 1 {
+	if version.SchemaVersion != 1 && version.SchemaVersion != 2 {
 		return fail(ErrJournalSchema)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -170,6 +177,12 @@ func (j *Journal) Save(next JournalState) error {
 	}
 	if j.state.GeneratedOwned && !next.GeneratedOwned || j.state.PackageBytes != 0 && next.PackageBytes != j.state.PackageBytes {
 		return ErrOperationConflict
+	}
+	if old := j.state.Cover; old != nil {
+		cover := next.Cover
+		if cover == nil || cover.SHA256 != old.SHA256 || cover.SizeBytes != old.SizeBytes || cover.ContentType != old.ContentType || cover.Attempt < old.Attempt || cover.Attempt > old.Attempt+1 || old.ExpectedVersion > 0 && cover.ExpectedVersion != old.ExpectedVersion || old.Receipt != nil && (cover.Receipt == nil || *cover.Receipt != *old.Receipt) || old.SelectionKey != "" && (cover.SelectionKey != old.SelectionKey || cover.ExpectedVersion != old.ExpectedVersion || cover.UploadID != old.UploadID) {
+			return ErrOperationConflict
+		}
 	}
 	if j.state.Encoding != nil && (next.Encoding == nil || *j.state.Encoding != *next.Encoding) {
 		return ErrOperationConflict
@@ -219,6 +232,9 @@ func validUUID(id string) bool {
 }
 
 func validIntent(v Intent) bool {
+	if v.CoverPath != "" && (v.Command != "upload" || !filepath.IsAbs(v.CoverPath) || len(v.CoverPath) > 4096 || strings.ContainsRune(v.CoverPath, 0)) {
+		return false
+	}
 	if v.Command != "prepare" && v.Command != "upload" && v.Command != "publish" {
 		return false
 	}
@@ -244,6 +260,11 @@ func validIntent(v Intent) bool {
 }
 
 func validState(v JournalState) bool {
+	if cover := v.Cover; cover != nil {
+		if v.Intent.CoverPath == "" || !coverDigestPattern.MatchString(cover.SHA256) || cover.SizeBytes < 1 || cover.SizeBytes > 5<<20 || (cover.ContentType != "image/jpeg" && cover.ContentType != "image/png") || cover.Attempt < 1 || cover.Attempt > 10000 || cover.AttemptKey != v.OperationID+":cover:"+strconv.Itoa(cover.Attempt) || cover.ExpectedVersion < 0 || cover.SelectionKey != "" && (cover.ExpectedVersion < 1 || cover.UploadID == "" || cover.SelectionKey != cover.AttemptKey+":select") {
+			return false
+		}
+	}
 	if v.Encoding != nil {
 		preset := v.Encoding.ActualEncoder + "-hq-v1"
 		switch v.Encoding.ActualEncoder {
@@ -264,7 +285,7 @@ func validState(v JournalState) bool {
 			}
 		}
 	}
-	if v.SchemaVersion != 1 || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 || v.PackageBytes < 0 || v.PackageBytes > media.RecordingPackageMaxBytes || v.GeneratedOwned && v.Intent.Command != "prepare" && (v.Intent.Command != "upload" || !v.Intent.Prepare) {
+	if (v.SchemaVersion != 1 && v.SchemaVersion != 2) || (v.SchemaVersion == 1 && (v.Intent.CoverPath != "" || v.Cover != nil)) || (v.SchemaVersion == 2 && v.Intent.CoverPath == "") || !validUUID(v.OperationID) || !validIntent(v.Intent) || v.PublishExpectedVersion < 0 || v.PackageBytes < 0 || v.PackageBytes > media.RecordingPackageMaxBytes || v.GeneratedOwned && v.Intent.Command != "prepare" && (v.Intent.Command != "upload" || !v.Intent.Prepare) {
 		return false
 	}
 	if v.LastResult != nil && (v.LastResult.OperationID != v.OperationID || v.LastResult.RecordingID != v.RecordingID || v.LastResult.PackageID != v.PackageID || v.LastResult.PackageDigest != v.PackageDigest) {

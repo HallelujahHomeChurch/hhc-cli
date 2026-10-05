@@ -2,6 +2,36 @@
 
 Recording preparation and authenticated publishing for HHC.
 
+`recordings upload FILE --prepare --title TITLE --cover PATH` optionally selects
+a custom cover; prepared HLS directory uploads accept the same flag. The image
+must be a regular JPEG/PNG file, at most 5 MiB, 24 MP and 8192 pixels per edge,
+with exact 16:9 dimensions. Normalize non-default EXIF orientation first; the CLI
+does not crop or rotate. Preflight and an operation-owned SHA-256 snapshot happen
+before encoding or remote mutations. Original video and image files are retained.
+The cover stays outside the HLS inventory and digest.
+
+Cover operations use journal schema 2; no-cover operations retain schema 1 and
+the new CLI reads both. Older CLIs refuse schema 2. `resume` uses the same operation
+ID/profile, checks accepted remote uploads and selection receipts before local
+input, and waits up to ten minutes for a cover per invocation. Cover failure
+leaves ready HLS intact and prevents requested publication. Selection uses a
+durable key and If-Match, then publication binds the resulting version. Manual
+cover changes or publication changes stop with conflict rather than restoring
+historical state. Generated HLS is cleaned when ready, even if the cover fails;
+the owned cover snapshot is cleaned after selection or the 24-hour inactivity
+sweep. A swept snapshot can be recreated only from an identical original hash.
+`version` and the signed release manifest retain `journalSchema=1` as the baseline
+protocol for existing managed updaters; `supportedJournalSchemas=[1,2]` advertises
+the new CLI's capabilities. The release manifest shape is unchanged, so previously
+released strict updaters can verify and install the new bundle.
+
+JSON schema v1 results add `coverState` (`not_requested`, `pending`, `processing`,
+`selected`, `failed`, `conflict`) and optional `coverId`. Requested covers require
+`coverState=selected`, `requestedActionSatisfied=true` and exit 0; media readiness
+and `publicationState=published` remain separate evidence. Add `--publish` only
+when publication is explicitly authorized. Backend and Gateway compatibility
+must be verified before releasing the CLI through the existing merged-tag workflow.
+
 Production activation and device acceptance are tracked separately from builds.
 The implementation contains the versioned
 HLS inventory/digest contract, independent source/package budgets and source

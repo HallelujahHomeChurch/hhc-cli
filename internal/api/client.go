@@ -137,7 +137,7 @@ func (c *Client) request(ctx context.Context, method, path, scope string, body [
 		}
 		req.Header.Set("Authorization", "Bearer "+c.token.Bearer())
 		req.Header.Set("Accept", "application/json")
-		if body != nil {
+		if body != nil && req.Header.Get("Content-Type") == "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
 		response, err := c.http.Do(req)

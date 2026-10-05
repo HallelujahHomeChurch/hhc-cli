@@ -39,6 +39,15 @@ verify_hash() {
   if command -v sha256sum >/dev/null; then printf '%s  %s\n' "$1" "$2" | sha256sum -c -;
   else printf '%s  %s\n' "$1" "$2" | shasum -a 256 -c -; fi
 }
+fetch_verified() {
+  fetch "$1" "$3" || return 1
+  if verify_hash "$2" "$1"; then return 0; fi
+  # Some upstream edge responses are HTTP 200 HTML rather than archive bytes.
+  # Try the official download variant once; the original digest still gates tar.
+  printf 'Primary source checksum failed; trying official download variant.\n' >&2
+  fetch "$1" "$4" || return 1
+  verify_hash "$2" "$1"
+}
 
 fetch sources/ffmpeg.tar.xz https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz
 verify_hash 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3 sources/ffmpeg.tar.xz
@@ -47,8 +56,9 @@ fetch sources/ffmpeg-devel.asc https://ffmpeg.org/ffmpeg-devel.asc
 gpg --homedir "$media_build/gpg" --batch --import sources/ffmpeg-devel.asc
 gpg --homedir "$media_build/gpg" --batch --status-fd 1 --verify sources/ffmpeg.tar.xz.asc sources/ffmpeg.tar.xz |
   grep -F '[GNUPG:] VALIDSIG FCF986EA15E6E293A5644F10B4322F04D67658D8 '
-fetch sources/x264.tar.bz2 https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2
-verify_hash 6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224 sources/x264.tar.bz2
+fetch_verified sources/x264.tar.bz2 6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224 \
+  https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2 \
+  'https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2?inline=false'
 tar -xf sources/ffmpeg.tar.xz
 tar -xf sources/x264.tar.bz2
 

@@ -77,7 +77,7 @@ func helpRequested(args []string) bool {
 		name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		// These existing flags consume their next argv element even if it starts
 		// with '-'. Match flag.FlagSet semantics; titles/scopes remain literal data.
-		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "operation-id", "output", "timeout", "directory"}, name) {
+		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "cover", "operation-id", "output", "timeout", "directory"}, name) {
 			i++
 		}
 	}
@@ -129,6 +129,7 @@ var commandHelp = map[string]string{
   FILE／DIRECTORY      原始影片檔，或已準備好的 HLS 目錄
   --prepare            原始影片須加此參數，先轉檔再上傳
   --title TITLE        必填：錄影標題
+  --cover PATH         選填：16:9 JPEG／PNG，最多 5 MiB；選用成功後才發布
   --profile NAME       登入設定名稱，預設 default
   --publish            上傳驗證完成後發布（需要 publish 權限）
 

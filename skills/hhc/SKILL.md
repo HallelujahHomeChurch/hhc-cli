@@ -13,6 +13,9 @@ administrator credential provisioning.
 1. Resolve the source path, title, explicit profile, and whether publication is
    authorized. Existing explicit upload-and-publish authorization needs no second
    confirmation. Upload-only means no `--publish`.
+   If the user requests a cover, resolve its path and pass optional `--cover PATH`.
+   JPEG/PNG must already be 16:9, at most 5 MiB/24 MP/8192 px, with normalized EXIF
+   orientation. Do not crop, rotate, substitute or delete the user's image.
 2. Check `hhc version --json` and `hhc auth status --profile NAME --json --no-input`.
    Missing login or permissions is a stop, not permission to search credentials,
    change accounts, or grant privileges. Human login is an explicitly requested
@@ -33,6 +36,9 @@ administrator credential provisioning.
    For authorized publication also require `publicationState=published` (or the
    standalone publish result's `publication.outcome=published`). Transfer
    acceptance, `validating`, and a historical receipt are not current publication.
+   Requested covers also require `coverState=selected`; cover failure/conflict
+   is nonzero even when HLS is ready. Resume the same operation ID without adding
+   `--cover` or `--publish`; remote receipts can succeed without the original image.
 
 For `upload --prepare`, claim generated media cleaned only when
 `localCleanupState=complete` and `cleanupBytesRemaining=0`. Cleanup failure uses

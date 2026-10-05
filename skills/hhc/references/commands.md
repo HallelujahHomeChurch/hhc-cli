@@ -27,6 +27,21 @@ pipe; credentials do not belong in agent prompts, argv, or journal files.
 ```
 
 Omit `--publish` for upload-only. macOS uses an absolute POSIX source path.
+Pass optional `--cover PATH` only for a user-requested custom cover, for either
+prepared HLS directories or `--prepare` source uploads:
+
+```json
+["hhc", "recordings", "upload", "C:\\錄影\\主日.mp4", "--prepare", "--title", "主日聚會", "--cover", "C:\\錄影\\封面 image.png", "--profile", "church-uploader", "--operation-id", "44444444-4444-4444-8444-444444444444", "--json", "--no-input"]
+```
+
+The image must be regular JPEG/PNG, exact 16:9, at most 5 MiB/24 MP/8192 px;
+normalize EXIF orientation first. The CLI never deletes either original.
+Cover operations use journal schema 2; old schema 1 resumes remain supported.
+Requested covers require `data.coverState=selected` and an optional `data.coverId`
+identifies the selection. `pending`/`processing`/`failed`/`conflict` is unconfirmed,
+even with `validationState=ready`. Use the same resume ID; never restart HLS
+because cover processing timed out. A swept image snapshot requires the original
+with the exact pinned hash only when the server has not accepted the upload.
 The default deadline is four hours for this invocation; it is not a completion
 guarantee. The CLI owns generated HLS cleanup after server readiness. Source
 limit is 50 GB; total HLS limit is 10 GB. Source files remain unchanged.
