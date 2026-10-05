@@ -51,7 +51,7 @@ func TestCoverPreflightSnapshotAndSchema(t *testing.T) {
 }
 
 func TestReadyCoverFlowAndReceiptResume(t *testing.T) {
-	for _, mode := range []string{"selected", "failed", "expired", "uploading", "lost-upload", "lost-selection", "manual-change", "unpublished"} {
+	for _, mode := range []string{"selected", "failed", "expired", "uploading", "lost-upload", "remote-accepted-no-snapshot", "lost-selection", "manual-change", "unpublished"} {
 		t.Run(mode, func(t *testing.T) {
 			intent := journalIntent(t)
 			intent.CoverPath = filepath.Join(t.TempDir(), "封面 image.png")
@@ -194,6 +194,15 @@ func TestReadyCoverFlowAndReceiptResume(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := api.NewClient(token, nil)
+			if mode == "remote-accepted-no-snapshot" {
+				posts = 1 // Remote accepted bytes; local process died before saving UploadID.
+				if err := j.root.Remove("cover.snapshot"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(intent.CoverPath); err != nil {
+					t.Fatal(err)
+				}
+			}
 			value, err := UploadPrepared(context.Background(), c, NewUploader(), j)
 			if mode == "failed" {
 				if err == nil || publishes != 0 || value.RequestedActionSatisfied || value.ValidationState != "ready" {
@@ -254,8 +263,90 @@ func TestMissingSnapshotStopsBeforeLocalOrRemoteHLS(t *testing.T) {
 	}
 	j.root.Remove("cover.snapshot")
 	os.WriteFile(intent.CoverPath, []byte("changed"), 0600)
-	if err := ensureCoverSnapshot(context.Background(), nil, j); !errors.Is(err, ErrCoverInput) {
+	if err := ensureCoverSnapshot(j); !errors.Is(err, ErrCoverInput) {
 		t.Fatal("resume bypassed pinned image", err)
+	}
+}
+
+func TestEarlyCoverResumeDoesNotCallNotReadyCoverAPI(t *testing.T) {
+	for _, phase := range []string{"no-package", "uploading", "validating"} {
+		t.Run(phase, func(t *testing.T) {
+			intent := journalIntent(t)
+			intent.Prepare, intent.Publish = false, false
+			intent.Input = t.TempDir() // Deliberately absent HLS: reaching local validation is sufficient.
+			intent.CoverPath = filepath.Join(t.TempDir(), "cover.png")
+			var b bytes.Buffer
+			if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 160, 90))); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(intent.CoverPath, b.Bytes(), 0600); err != nil {
+				t.Fatal(err)
+			}
+			j, err := OpenJournal(t.TempDir(), journalFixtureID, &intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer j.Close()
+			if err := SnapshotCover(j); err != nil {
+				t.Fatal(err)
+			}
+			if err := j.root.Remove("cover.snapshot"); err != nil {
+				t.Fatal(err)
+			}
+			state := j.State()
+			state.RecordingID = "00000000-0000-4000-8000-000000000041"
+			if phase != "no-package" {
+				state.PackageID = strings.Repeat("b", 32)
+				state.SessionID = state.PackageID
+			}
+			if err := j.Save(state); err != nil {
+				t.Fatal(err)
+			}
+			covers, packages := 0, 0
+			expiry := time.Now().Add(time.Hour)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/api/account/v1/oauth/token":
+					w.Header().Set("Cache-Control", "no-store")
+					fmt.Fprintf(w, `{"access_token":"fixture","token_type":"Bearer","expires_in":600,"scope":"cms:recordings:read cms:recordings:write","principal":{"type":"service","id":%q,"client_id":"client","credential_id":"00000000-0000-4000-8000-000000000012","credential_expires_at":%q}}`, intent.PrincipalID, expiry.Format(time.RFC3339))
+				case strings.HasSuffix(r.URL.Path, "/covers"):
+					covers++
+					w.WriteHeader(http.StatusConflict)
+					fmt.Fprint(w, `{"error":{"code":"conflict","message":"Recording package is not ready."}}`)
+				case strings.HasSuffix(r.URL.Path, "/packages/"+state.PackageID):
+					packages++
+					json.NewEncoder(w).Encode(map[string]any{"data": api.Package{RecordingID: state.RecordingID, PackageID: state.PackageID, SessionID: state.SessionID, State: phase, ExpiresAt: expiry}})
+				default:
+					t.Errorf("unexpected early mutation %s", r.URL.Path)
+					w.WriteHeader(500)
+				}
+			}))
+			defer server.Close()
+			origin, _ := url.Parse(server.URL)
+			previous := http.DefaultTransport
+			http.DefaultTransport = fixtureTransport{origin, server.Client().Transport}
+			defer func() { http.DefaultTransport = previous }()
+			token, err := auth.NewServiceClient().Exchange(context.Background(), "client", "fixture", []string{"cms:recordings:read", "cms:recordings:write"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			_, err = UploadPrepared(ctx, api.NewClient(token, nil), NewUploader(), j)
+			if covers != 0 || phase != "no-package" && packages != 1 {
+				t.Fatalf("cover lookup before ready: covers=%d packages=%d err=%v", covers, packages, err)
+			}
+			if phase == "validating" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatal("did not continue validation", err)
+			}
+			if phase != "validating" && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("did not reach local HLS validation", err)
+			}
+			if _, err := j.root.Stat("cover.snapshot"); err != nil {
+				t.Fatal("pinned snapshot not restored", err)
+			}
+		})
 	}
 }
 

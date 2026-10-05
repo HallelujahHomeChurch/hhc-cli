@@ -48,7 +48,7 @@ func (c *Client) ListCovers(ctx context.Context, id string) (CoverList, error) {
 	if err := c.request(ctx, http.MethodGet, "/api/admin/recordings/"+id+"/covers", "cms:recordings:read", nil, nil, &value); err != nil {
 		return value, err
 	}
-	if value.RecordingVersion < 1 || len(value.Items) > 100 || value.SelectedCoverID != "" && !coverID.MatchString(value.SelectedCoverID) {
+	if value.RecordingVersion < 1 || len(value.Items) > 1000 || value.SelectedCoverID != "" && !coverID.MatchString(value.SelectedCoverID) {
 		return CoverList{}, ErrInvalidResponse
 	}
 	for _, item := range value.Items {

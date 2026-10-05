@@ -69,7 +69,7 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 	if err := c.RequireScopes(scopes...); err != nil {
 		return result, err
 	}
-	if err := ensureCoverSnapshot(ctx, c, j); err != nil {
+	if err := SnapshotCover(j); err != nil {
 		result.CoverState = "failed"
 		return result, err
 	}
@@ -93,6 +93,10 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 			if pkg.State == "ready" {
 				return finishReady(ctx, c, j, result)
 			}
+			if err := ensureCoverSnapshot(j); err != nil {
+				result.CoverState = "failed"
+				return result, err
+			}
 			if pkg.State == "failed" {
 				result.ValidationState = "failed"
 				return result, ErrPackageFailed
@@ -114,6 +118,10 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 				return result, err
 			}
 		}
+	}
+	if err := ensureCoverSnapshot(j); err != nil {
+		result.CoverState = "failed"
+		return result, err
 	}
 	input, err := preparedInput(ctx, j)
 	if err != nil {

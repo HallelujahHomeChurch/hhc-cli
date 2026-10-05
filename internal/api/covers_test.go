@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
@@ -34,5 +36,27 @@ func TestCoverWireContract(t *testing.T) {
 	}
 	if _, err := c.SelectCover(context.Background(), recordingID, "upload-1", 4, "select-key"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCoverListHistoricalReceiptBound(t *testing.T) {
+	for _, count := range []int{1000, 1001} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			items := make([]CoverItem, count)
+			for i := range items {
+				items[i] = CoverItem{ID: fmt.Sprintf("cover-%d", i), UploadID: fmt.Sprintf("upload-%d", i), Kind: "custom", State: "expired"}
+			}
+			c, _ := apiFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"data": CoverList{Items: items, RecordingVersion: 4}})
+			}, false, "cms:recordings:read")
+			list, err := c.ListCovers(context.Background(), recordingID)
+			if count == 1000 && (err != nil || len(list.Items) != count) {
+				t.Fatal("valid historical receipts rejected", err)
+			}
+			if count == 1001 && !errors.Is(err, ErrInvalidResponse) {
+				t.Fatal("unbounded list accepted", err)
+			}
+		})
 	}
 }
