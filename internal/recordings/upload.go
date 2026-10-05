@@ -69,7 +69,7 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 	if err := c.RequireScopes(scopes...); err != nil {
 		return result, err
 	}
-	if err := SnapshotCover(j); err != nil {
+	if err := ensureCoverSnapshot(ctx, c, j); err != nil {
 		result.CoverState = "failed"
 		return result, err
 	}

@@ -51,7 +51,7 @@ func TestCoverPreflightSnapshotAndSchema(t *testing.T) {
 }
 
 func TestReadyCoverFlowAndReceiptResume(t *testing.T) {
-	for _, mode := range []string{"selected", "failed", "expired", "lost-upload", "lost-selection", "manual-change", "unpublished"} {
+	for _, mode := range []string{"selected", "failed", "expired", "uploading", "lost-upload", "lost-selection", "manual-change", "unpublished"} {
 		t.Run(mode, func(t *testing.T) {
 			intent := journalIntent(t)
 			intent.CoverPath = filepath.Join(t.TempDir(), "封面 image.png")
@@ -112,7 +112,14 @@ func TestReadyCoverFlowAndReceiptResume(t *testing.T) {
 						if mode == "expired" && posts == 1 {
 							status = "expired"
 						}
-						items = append(items, api.CoverItem{ID: "cover-1", UploadID: fmt.Sprintf("upload-%d", posts), Kind: "custom", State: status, OperationKey: fmt.Sprintf("%s:cover:%d", state.OperationID, posts)})
+						if mode == "uploading" && posts == 1 {
+							status = "uploading"
+						}
+						count := posts
+						if mode == "uploading" {
+							count = 1
+						}
+						items = append(items, api.CoverItem{ID: "cover-1", UploadID: fmt.Sprintf("upload-%d", count), Kind: "custom", State: status, OperationKey: fmt.Sprintf("%s:cover:%d", state.OperationID, count)})
 					}
 					json.NewEncoder(w).Encode(map[string]any{"data": api.CoverList{Items: items, SelectedCoverID: selected, RecordingVersion: version}})
 				case strings.HasSuffix(r.URL.Path, "/cover-uploads"):
@@ -131,7 +138,11 @@ func TestReadyCoverFlowAndReceiptResume(t *testing.T) {
 						return
 					}
 					w.WriteHeader(202)
-					json.NewEncoder(w).Encode(map[string]any{"data": api.CoverUpload{UploadID: fmt.Sprintf("upload-%d", posts), State: "pending"}})
+					count := posts
+					if mode == "uploading" {
+						count = 1
+					}
+					json.NewEncoder(w).Encode(map[string]any{"data": api.CoverUpload{UploadID: fmt.Sprintf("upload-%d", count), State: "pending"}})
 				case strings.HasSuffix(r.URL.Path, "/cover"):
 					puts++
 					if _, err := os.Stat(generated); !os.IsNotExist(err) {
@@ -217,13 +228,34 @@ func TestReadyCoverFlowAndReceiptResume(t *testing.T) {
 				expectedPuts = 2
 			}
 			expectedPosts := 1
-			if mode == "expired" {
+			if mode == "expired" || mode == "uploading" {
 				expectedPosts = 2
 			}
 			if posts != expectedPosts || puts != expectedPuts {
 				t.Fatal("cover replayed", posts, puts)
 			}
 		})
+	}
+}
+
+func TestMissingSnapshotStopsBeforeLocalOrRemoteHLS(t *testing.T) {
+	intent := journalIntent(t)
+	intent.CoverPath = filepath.Join(t.TempDir(), "cover.png")
+	var b bytes.Buffer
+	png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 160, 90)))
+	os.WriteFile(intent.CoverPath, b.Bytes(), 0600)
+	j, err := OpenJournal(t.TempDir(), journalFixtureID, &intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	if err := SnapshotCover(j); err != nil {
+		t.Fatal(err)
+	}
+	j.root.Remove("cover.snapshot")
+	os.WriteFile(intent.CoverPath, []byte("changed"), 0600)
+	if err := ensureCoverSnapshot(context.Background(), nil, j); !errors.Is(err, ErrCoverInput) {
+		t.Fatal("resume bypassed pinned image", err)
 	}
 }
 

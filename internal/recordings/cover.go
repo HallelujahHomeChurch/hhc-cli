@@ -203,6 +203,41 @@ func SnapshotCover(j *Journal) error {
 	return writeCover(j, data)
 }
 
+// Restore required local bytes before encoding/HLS mutation. Accepted remote
+// uploads are reconciled first, so ready resume does not require the original.
+func ensureCoverSnapshot(ctx context.Context, c *api.Client, j *Journal) error {
+	if err := SnapshotCover(j); err != nil {
+		return err
+	}
+	state := j.State()
+	if state.Cover == nil || state.Cover.Receipt != nil {
+		return nil
+	}
+	cover := *state.Cover
+	state.Cover = &cover
+	if cover.UploadID == "" && state.RecordingID != "" {
+		list, err := retryControl(ctx, func() (api.CoverList, error) { return c.ListCovers(ctx, state.RecordingID) })
+		if err != nil {
+			return err
+		}
+		for _, item := range list.Items {
+			if item.Kind == "custom" && item.OperationKey == cover.AttemptKey {
+				cover.UploadID = item.UploadID
+				cover.State = item.State
+				if err := j.Save(state); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	if cover.UploadID != "" && cover.State != "uploading" && cover.State != "expired" {
+		return nil
+	}
+	_, err := coverBytes(j)
+	return err
+}
+
 func writeCover(j *Journal, data []byte) error {
 	temp := ".cover.tmp"
 	if err := j.root.Remove(temp); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -376,6 +411,21 @@ func CompleteCover(ctx context.Context, c *api.Client, j *Journal) error {
 			found = true
 			cover.State = item.State
 			switch item.State {
+			case "uploading":
+				data, err := coverBytes(j)
+				if err != nil {
+					return err
+				}
+				upload, err := retryControl(ctx, func() (api.CoverUpload, error) {
+					return c.UploadCover(ctx, state.RecordingID, data, cover.ContentType, cover.AttemptKey)
+				})
+				if err != nil {
+					return err
+				}
+				if upload.UploadID != cover.UploadID {
+					return api.ErrInvalidResponse
+				}
+				cover.State = upload.State
 			case "ready":
 				cover.State = "processing"
 				cover.SelectionKey = cover.AttemptKey + ":select"
