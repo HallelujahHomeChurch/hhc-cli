@@ -20,6 +20,7 @@ func encodeArguments(source, output string, rendition RecordingRendition, encode
 	}
 	i := func(value int64) string { return strconv.FormatInt(value, 10) }
 	fps := strconv.FormatFloat(rendition.FrameRate, 'f', -1, 64)
+	duration := strconv.FormatFloat(rendition.DurationSeconds, 'f', -1, 64)
 	gop := strconv.Itoa(int(math.Ceil(rendition.FrameRate * 30)))
 	maxrate := rendition.VideoBitrate * 4 / 3
 	// x264 medium's 40-frame lookahead can exceed mux interleave buffering
@@ -65,6 +66,9 @@ func encodeArguments(source, output string, rendition RecordingRendition, encode
 		"-r", fps, "-fps_mode", "cfr", "-g", gop, "-keyint_min", gop, "-flags", "+cgop",
 		"-force_key_frames", "expr:gte(t,n_forced*30)",
 		"-c:a", "aac", "-b:a", "128000", "-ar", "48000", "-ac", "2",
+		// Source audio may end before the final video frame. Pad only its
+		// missing tail and bound every output to the planned source duration.
+		"-af", "apad=whole_dur=" + duration, "-t", duration,
 		"-f", "hls", "-hls_time", "30", "-hls_playlist_type", "vod", "-hls_segment_type", "fmp4",
 		"-hls_flags", "independent_segments", "-hls_fmp4_init_filename", "init.mp4",
 		"-hls_segment_filename", filepath.ToSlash(filepath.Join(output, "seg-%06d.m4s")), filepath.ToSlash(filepath.Join(output, "index.m3u8")),

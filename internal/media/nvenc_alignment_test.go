@@ -24,6 +24,11 @@ func TestNVENCHLSPacketsDoNotRequirePresentationReordering(t *testing.T) {
 		if i := slices.Index(args, "-bf"); i < 0 || i+1 >= len(args) || args[i+1] != "0" {
 			t.Fatalf("NVENC still requires presentation reordering at %.6f fps", fps)
 		}
+		for flag, value := range map[string]string{"-af": "apad=whole_dur=1115", "-t": "1115"} {
+			if i := slices.Index(args, flag); i < 0 || i+1 >= len(args) || args[i+1] != value {
+				t.Fatalf("NVENC missing bounded audio tail padding: %s %s", flag, value)
+			}
+		}
 	}
 }
 
