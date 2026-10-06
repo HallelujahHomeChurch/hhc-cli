@@ -4,13 +4,54 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/recordings"
 )
+
+func TestValidationProgressDisplay(t *testing.T) {
+	now := time.Now().UTC()
+	zero, total := int64(0), int64(100)
+	value := recordings.TransferProgress{State: "validating", ProcessingProgress: &api.ProcessingProgress{Attempt: 2, Phase: "package_validation", ObjectsVerified: &zero, ObjectsTotal: &total, AttemptStartedAt: now.Add(-10 * time.Minute), PhaseStartedAt: now.Add(-8 * time.Minute), LastProgressAt: now.Add(-6 * time.Minute), HeartbeatAt: now}}
+	var output bytes.Buffer
+	p := &progressDisplay{writer: &output, interactive: true, width: func() int { return 160 }, now: func() time.Time { return now }}
+	p.Transfer(value)
+	if !strings.Contains(output.String(), "0/100") || !strings.Contains(output.String(), "第2次") || !strings.Contains(output.String(), "6分未有進展") || !strings.Contains(output.String(), "仍等待 ready") {
+		t.Fatalf("lost safe progress: %q", output.String())
+	}
+	if strings.Contains(output.String(), "100%") || strings.Contains(output.String(), "\n") {
+		t.Fatal("progress manufactured completion or extra lines")
+	}
+	output.Reset()
+	p = newProgressDisplay(&output, true, "operation", false)
+	p.Transfer(value)
+	var event struct {
+		Type               string                  `json:"type"`
+		ProcessingProgress *api.ProcessingProgress `json:"processingProgress"`
+	}
+	if json.Unmarshal(output.Bytes(), &event) != nil || event.Type != "processing_progress" || event.ProcessingProgress == nil || *event.ProcessingProgress.ObjectsVerified != 0 || strings.Contains(output.String(), "\r") {
+		t.Fatalf("invalid numeric JSON event: %q", output.String())
+	}
+}
+
+func TestValidationJSONRetainsHeartbeatUpdates(t *testing.T) {
+	now := time.Now().UTC()
+	value := &api.ProcessingProgress{Attempt: 1, Phase: "package_validation", AttemptStartedAt: now.Add(-time.Minute), PhaseStartedAt: now.Add(-time.Minute), LastProgressAt: now.Add(-time.Minute), HeartbeatAt: now}
+	var output bytes.Buffer
+	p := newProgressDisplay(&output, true, "operation", false)
+	p.now = func() time.Time { return now }
+	p.Transfer(recordings.TransferProgress{State: "validating", ProcessingProgress: value})
+	value.HeartbeatAt = now.Add(time.Second)
+	p.Transfer(recordings.TransferProgress{State: "validating", ProcessingProgress: value})
+	if strings.Count(output.String(), "\n") != 2 {
+		t.Fatalf("heartbeat update lost: %s", output.String())
+	}
+}
 
 func TestTerminalProgressRewritesOneLineAndEndsBeforeError(t *testing.T) {
 	var output bytes.Buffer

@@ -73,6 +73,16 @@ Stdout with `--json` is one object: `schemaVersion`, `ok`, `command`, `profile`,
 `principal`, `data`, `error`, and when applicable `operationId`.
 Unknown schema or malformed output means unconfirmed; never parse stderr as JSON.
 
+Progress is separate advisory stderr output. With `--json`,
+`encoding_progress` with `phase=local_validation` describes local HLS checking;
+`processing_progress` describes server validation. Its optional summary contains
+`attempt`, `phase`, verified counters, `attemptStartedAt`, `phaseStartedAt`,
+`lastProgressAt` and `heartbeatAt`. Missing counters or a null summary mean
+unknown, not zero. A fresh `heartbeatAt` with old `lastProgressAt` only means
+the worker is alive; after five minutes without progress report that observation.
+Even all counters completed is not readiness or publication. Ctrl+C stops the
+local wait, not the server job; reconcile with the same operation ID and profile.
+
 | Observation | Action |
 | --- | --- |
 | Upload exit 0, `ok`, `data.requestedActionSatisfied`, `data.validationState=ready` | Upload verified; publication is a separate field. |

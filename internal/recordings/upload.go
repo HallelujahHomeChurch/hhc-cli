@@ -17,9 +17,10 @@ var ErrSessionExpired = errors.New("session_expired")
 // TransferProgress is ephemeral transport diagnostics, never remote readiness.
 // Resumed progress includes server-confirmed objects, not just this invocation.
 type TransferProgress struct {
-	CompletedBytes int64
-	TotalBytes     int64
-	State          string
+	ProcessingProgress *api.ProcessingProgress
+	CompletedBytes     int64
+	TotalBytes         int64
+	State              string
 }
 
 type UploadResult struct {
@@ -112,7 +113,7 @@ func UploadPrepared(ctx context.Context, c *api.Client, u *Uploader, j *Journal)
 			}
 			result.TransferState, result.ValidationState = "complete", pkg.State
 			if j.TransferProgress != nil {
-				j.TransferProgress(TransferProgress{State: pkg.State})
+				j.TransferProgress(TransferProgress{State: pkg.State, ProcessingProgress: pkg.ProcessingProgress})
 			}
 			if err := waitContext(ctx, delay); err != nil {
 				return result, err
@@ -221,7 +222,7 @@ reconcile:
 				for path := range confirmed {
 					transferred += objects[path].SizeBytes
 				}
-				j.TransferProgress(TransferProgress{transferred, transferBytes, "uploading"})
+				j.TransferProgress(TransferProgress{CompletedBytes: transferred, TotalBytes: transferBytes, State: "uploading"})
 				var progressMu sync.Mutex
 				accepted = func(path string) {
 					progressMu.Lock()
@@ -229,7 +230,7 @@ reconcile:
 					if !confirmed[path] {
 						confirmed[path] = true
 						transferred += objects[path].SizeBytes
-						j.TransferProgress(TransferProgress{transferred, transferBytes, "uploading"})
+						j.TransferProgress(TransferProgress{CompletedBytes: transferred, TotalBytes: transferBytes, State: "uploading"})
 					}
 				}
 			}
@@ -277,7 +278,7 @@ reconcile:
 			result.TransferState = "complete"
 			result.ValidationState = pkg.State
 			if j.TransferProgress != nil {
-				j.TransferProgress(TransferProgress{transferBytes, transferBytes, pkg.State})
+				j.TransferProgress(TransferProgress{CompletedBytes: transferBytes, TotalBytes: transferBytes, State: pkg.State, ProcessingProgress: pkg.ProcessingProgress})
 			}
 			if err := waitContext(ctx, pollDelay); err != nil {
 				return result, err

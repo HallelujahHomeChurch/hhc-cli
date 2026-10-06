@@ -102,18 +102,19 @@ func (c *Client) SignPackage(ctx context.Context, recordingID, packageID string,
 
 // Package state is authoritative only when returned by the server, never from a PUT.
 type Package struct {
-	PackageID         string                          `json:"packageId"`
-	SessionID         string                          `json:"sessionId"`
-	RecordingID       string                          `json:"recordingId"`
-	State             string                          `json:"state"`
-	ExpiresAt         time.Time                       `json:"expiresAt"`
-	ReadyAt           *time.Time                      `json:"readyAt,omitempty"`
-	UploadedAt        *time.Time                      `json:"uploadedAt,omitempty"`
-	RetentionRevision int64                           `json:"retentionRevision,omitempty"`
-	MediaExpiresAt    *time.Time                      `json:"mediaExpiresAt,omitempty"`
-	Inventory         media.RecordingPackageInventory `json:"inventory"`
-	ConfirmedObjects  []string                        `json:"confirmedObjects"`
-	NextCursor        string                          `json:"nextCursor"`
+	ProcessingProgress *ProcessingProgress             `json:"processingProgress,omitempty"`
+	PackageID          string                          `json:"packageId"`
+	SessionID          string                          `json:"sessionId"`
+	RecordingID        string                          `json:"recordingId"`
+	State              string                          `json:"state"`
+	ExpiresAt          time.Time                       `json:"expiresAt"`
+	ReadyAt            *time.Time                      `json:"readyAt,omitempty"`
+	UploadedAt         *time.Time                      `json:"uploadedAt,omitempty"`
+	RetentionRevision  int64                           `json:"retentionRevision,omitempty"`
+	MediaExpiresAt     *time.Time                      `json:"mediaExpiresAt,omitempty"`
+	Inventory          media.RecordingPackageInventory `json:"inventory"`
+	ConfirmedObjects   []string                        `json:"confirmedObjects"`
+	NextCursor         string                          `json:"nextCursor"`
 }
 
 func (c *Client) CreateRecording(ctx context.Context, title, key string) (Recording, error) {

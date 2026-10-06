@@ -24,6 +24,18 @@ func TestSkillCommandExamples(t *testing.T) {
 	}
 }
 
+func TestSkillProcessingProgressReference(t *testing.T) {
+	doc, err := os.ReadFile("../../skills/hhc/references/commands.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"processing_progress", "lastProgressAt", "heartbeatAt", "local_validation", "Ctrl+C"} {
+		if !strings.Contains(string(doc), field) {
+			t.Errorf("progress reference missing %s", field)
+		}
+	}
+}
+
 func checkSkillExamples(t *testing.T, doc string) {
 	t.Helper()
 	blocks := strings.Split(strings.ReplaceAll(doc, "\r\n", "\n"), "```json\n")

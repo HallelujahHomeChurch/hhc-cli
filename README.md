@@ -216,7 +216,16 @@ PUTs are not double-counted. A transferred 100% is not ready: server processing
 shows a separate waiting-for-validation status. Progress ends on its own line
 before the unchanged final result or full error diagnostic. `--json`, `--no-input`,
 redirected/nonterminal stderr and `TERM=dumb` retain existing line-based output;
-the new upload observer emits no extra JSON events or journal fields.
+the upload byte observer does not change journal fields. Validation emits the
+processing events described below.
+
+Processing progress now reports the server phase, attempt, elapsed time and
+verified object count when available. Five minutes without actual progress is
+shown independently of the heartbeat; it is advisory, not a failed job. Old
+servers remain supported with unknown progress. `--json` adds safe
+`processing_progress` events to stderr; stdout and journals remain unchanged.
+After encoding, local HLS checking shows rendition/segment counters and elapsed
+time before upload. Encoding or counter completion never establishes ready.
 
 ## Maintainer release workflow
 
