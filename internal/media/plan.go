@@ -23,10 +23,14 @@ type EncodeOptions struct {
 }
 
 type EncodingProgress struct {
-	Rendition string  `json:"rendition"`
-	Encoder   string  `json:"encoder"`
-	Fraction  float64 `json:"fraction"`
-	Speed     float64 `json:"speed"`
+	Phase            string  `json:"phase,omitempty"`
+	SegmentsVerified int     `json:"segmentsVerified,omitempty"`
+	SegmentsTotal    int     `json:"segmentsTotal,omitempty"`
+	ElapsedSeconds   float64 `json:"elapsedSeconds,omitempty"`
+	Rendition        string  `json:"rendition"`
+	Encoder          string  `json:"encoder"`
+	Fraction         float64 `json:"fraction"`
+	Speed            float64 `json:"speed"`
 }
 
 func DefaultEncodeOptions() EncodeOptions {

@@ -314,7 +314,12 @@ func encodeRenditions(ctx context.Context, source, staging, ffmpeg, ffprobe stri
 	var measured []RenditionMedia
 	for _, r := range renditions {
 		directory := filepath.Join(staging, r.Name)
-		actual, err := MeasureRendition(ctx, ffprobe, directory, r)
+		validationStarted := time.Now()
+		actual, err := measureRendition(ctx, ffprobe, directory, r, func(done, total int) {
+			if progress != nil {
+				progress(EncodingProgress{Phase: "local_validation", Rendition: r.Name, Fraction: 1, SegmentsVerified: done, SegmentsTotal: total, ElapsedSeconds: time.Since(validationStarted).Seconds()})
+			}
+		})
 		if err != nil {
 			return nil, err
 		}

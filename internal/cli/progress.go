@@ -8,8 +8,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/recordings"
 	"golang.org/x/term"
@@ -25,6 +27,7 @@ type progressDisplay struct {
 	active, closed bool
 	lastLine       string
 	lastWidth      int
+	now            func() time.Time
 }
 
 func newProgressDisplay(writer io.Writer, jsonMode bool, operationID string, interactive bool) *progressDisplay {
@@ -47,6 +50,10 @@ func (p *progressDisplay) Encoding(value media.EncodingProgress) {
 		recordingProgress(p.writer, p.jsonMode, p.operationID)(value)
 		return
 	}
+	if value.Phase == "local_validation" {
+		p.render("", 0, "", fmt.Sprintf("本機檢查 %s · %d/%d 片段 · 已耗%.0f秒", value.Rendition, value.SegmentsVerified, value.SegmentsTotal, value.ElapsedSeconds))
+		return
+	}
 	fraction := value.Fraction
 	if math.IsNaN(fraction) || math.IsInf(fraction, 0) {
 		fraction = 0
@@ -59,7 +66,10 @@ func (p *progressDisplay) Encoding(value media.EncodingProgress) {
 }
 
 func (p *progressDisplay) Transfer(value recordings.TransferProgress) {
-	// Keep existing JSON and redirected logs unchanged; this observer is UI only.
+	if value.State == "freezing" || value.State == "validating" {
+		p.processing(value.ProcessingProgress)
+		return
+	}
 	if !p.interactive {
 		return
 	}
@@ -69,9 +79,50 @@ func (p *progressDisplay) Transfer(value recordings.TransferProgress) {
 			return
 		}
 		p.render("上傳", int(float64(max(0, min(value.CompletedBytes, value.TotalBytes)))/float64(value.TotalBytes)*100), "", "")
-	case "freezing", "validating":
-		p.render("", 0, "", "上傳完成 - 等待影片驗證")
 	}
+}
+
+func (p *progressDisplay) processing(value *api.ProcessingProgress) {
+	if !value.Valid() {
+		value = nil
+	}
+	now := time.Now()
+	if p.now != nil {
+		now = p.now()
+	}
+	line := "上傳完成 - 等待影片驗證（進度未知）"
+	if value != nil {
+		phase := map[string]string{"queued": "等待處理", "source_finalization": "確認來源", "encoding": "轉檔", "package_validation": "驗證影片", "package_finalization": "完成套件"}[value.Phase]
+		elapsed := max(0, int(now.Sub(value.AttemptStartedAt).Minutes()))
+		idle := max(0, int(now.Sub(value.LastProgressAt).Minutes()))
+		line = fmt.Sprintf("%s · 第%d次 · 已耗%d分", phase, value.Attempt, elapsed)
+		if value.ObjectsVerified != nil && value.ObjectsTotal != nil {
+			line += fmt.Sprintf(" · %d/%d 物件", *value.ObjectsVerified, *value.ObjectsTotal)
+		}
+		if idle >= 5 {
+			line += fmt.Sprintf(" · %d分未有進展", idle)
+		}
+		line += " · 仍等待 ready"
+	}
+	if p.interactive {
+		p.render("", 0, "", line)
+		return
+	}
+	if p.jsonMode {
+		data, _ := json.Marshal(struct {
+			Type               string                  `json:"type"`
+			OperationID        string                  `json:"operationId"`
+			ProcessingProgress *api.ProcessingProgress `json:"processingProgress"`
+		}{"processing_progress", p.operationID, value})
+		line = string(data)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || line == p.lastLine {
+		return
+	}
+	p.lastLine = line
+	fmt.Fprintln(p.writer, line)
 }
 
 func (p *progressDisplay) render(label string, percent int, detail, status string) {
@@ -154,7 +205,11 @@ func recordingProgress(diagnostics io.Writer, jsonMode bool, operationID string)
 				media.EncodingProgress
 			}{"encoding_progress", operationID, p})
 		} else {
-			fmt.Fprintf(diagnostics, "轉檔 %s %.0f%% · %s · %.2fx\n", p.Rendition, p.Fraction*100, p.Encoder, p.Speed)
+			if p.Phase == "local_validation" {
+				fmt.Fprintf(diagnostics, "本機檢查 %s · %d/%d 片段 · 已耗%.0f秒\n", p.Rendition, p.SegmentsVerified, p.SegmentsTotal, p.ElapsedSeconds)
+			} else {
+				fmt.Fprintf(diagnostics, "轉檔 %s %.0f%% · %s · %.2fx\n", p.Rendition, p.Fraction*100, p.Encoder, p.Speed)
+			}
 		}
 	}
 }

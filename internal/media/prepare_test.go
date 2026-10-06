@@ -77,13 +77,24 @@ func TestPrepareCPUPreservesSourceAndAtomicallyCreatesPackage(t *testing.T) {
 	}
 	options := DefaultEncodeOptions()
 	progress := make(map[string]float64)
-	options.Progress = func(p EncodingProgress) { progress[p.Rendition] = p.Fraction }
+	localChecked := make(map[string]int)
+	options.Progress = func(p EncodingProgress) {
+		progress[p.Rendition] = p.Fraction
+		if p.Phase == "local_validation" {
+			localChecked[p.Rendition] = p.SegmentsVerified
+		}
+	}
 	value, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, options, nil)
 	if err != nil || len(value.Inventory.Renditions) != 3 || value.SourceFingerprint.SHA256 != fmt.Sprintf("%x", hash) || value.ActualEncoder != "libx264" {
 		t.Fatalf("prepare: %+v %v", value, err)
 	}
 	if progress["720p+1080p+480p"] < .99 {
 		t.Fatalf("did not stream shared encoding progress: %+v", progress)
+	}
+	for _, r := range value.Inventory.Renditions {
+		if localChecked[r.Name] != r.SegmentCount {
+			t.Fatalf("local validation progress missing: %s %+v", r.Name, localChecked)
+		}
 	}
 	verified, err := ReadPackage(ctx, output)
 	if err != nil || verified.InventoryDigest != value.Inventory.InventoryDigest {

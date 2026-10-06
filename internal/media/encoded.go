@@ -40,6 +40,10 @@ func invalidEncoded(check string) error {
 // directory. Each probe sees one init+fragment, never a remote playlist or the
 // entire recording. Remote validation remains the authority for ready.
 func MeasureRendition(ctx context.Context, ffprobe, directory string, r RecordingRendition) (value RenditionMedia, err error) {
+	return measureRendition(ctx, ffprobe, directory, r, nil)
+}
+
+func measureRendition(ctx context.Context, ffprobe, directory string, r RecordingRendition, progress func(int, int)) (value RenditionMedia, err error) {
 	value = RenditionMedia{Rendition: r}
 	check, segment := "rendition_arguments", -1
 	defer func() {
@@ -83,6 +87,9 @@ func MeasureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 	probePath := filepath.Join(scratch, "segment.mp4")
 	defer func() { os.Remove(probePath); os.Remove(scratch) }()
 	var start, end float64
+	if progress != nil {
+		progress(0, len(value.SegmentDurations))
+	}
 	for n, duration := range value.SegmentDurations {
 		segment = n
 		check = "fragment_read"
@@ -148,6 +155,9 @@ func MeasureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 		}
 		end = actual.end
 		value.SegmentBytes = append(value.SegmentBytes, size)
+		if progress != nil {
+			progress(n+1, len(value.SegmentDurations))
+		}
 	}
 	segment = -1
 	if math.Abs(end-start-r.DurationSeconds) > 1/r.FrameRate+0.001 {
