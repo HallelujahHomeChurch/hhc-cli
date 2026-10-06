@@ -71,6 +71,60 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 	}
 }
 
+func TestMultiEncodePadsEarlyAudioAtTheFinalFragment(t *testing.T) {
+	ffmpeg, ffprobe := os.Getenv("HHC_TEST_FFMPEG"), os.Getenv("HHC_TEST_FFPROBE")
+	if ffmpeg == "" || ffprobe == "" {
+		if os.Getenv("HHC_REQUIRE_MEDIA_TESTS") == "1" {
+			t.Fatal("media tools required")
+		}
+		t.Skip("media tools unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "early-audio.mp4")
+	// Ordinary recordings can end their audio track before the final video
+	// frame. Exercise a non-integral tail after the first 30-second boundary.
+	fixture := []string{"-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=1920x1080:r=30000/1001:d=37.24", "-f", "lavfi", "-i", "sine=sample_rate=48000:duration=37.08", "-c:v", "libx264", "-preset", "ultrafast", "-bf", "0", "-c:a", "aac", source}
+	if out, err := exec.CommandContext(ctx, ffmpeg, fixture...).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v %s", err, out)
+	}
+	info, err := ProbeSource(ctx, ffprobe, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanSource(info, DefaultEncodeOptions())
+	if err != nil || len(plan.Renditions) != 3 {
+		t.Fatalf("three-quality source plan: %+v %v", plan, err)
+	}
+	for _, r := range plan.Renditions {
+		if err := os.Mkdir(filepath.Join(dir, r.Name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args, err := multiEncodeArguments(source, dir, plan.Renditions, "libx264")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operation.RunTool(ctx, ffmpeg, args, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	var measured []RenditionMedia
+	for _, r := range plan.Renditions {
+		actual, err := MeasureRendition(ctx, ffprobe, filepath.Join(dir, r.Name), r)
+		if err != nil {
+			t.Fatalf("short source audio rejected for %s: %v", r.Name, err)
+		}
+		if len(actual.SegmentBytes) != 2 {
+			t.Fatal("lost the final fragment", r.Name)
+		}
+		measured = append(measured, actual)
+	}
+	if _, err := BuildMasterPlaylist(measured); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFractionalFrameRateMinuteBoundaryDoesNotInventATailSegment(t *testing.T) {
 	ffmpeg, ffprobe := os.Getenv("HHC_TEST_FFMPEG"), os.Getenv("HHC_TEST_FFPROBE")
 	if ffmpeg == "" || ffprobe == "" {
