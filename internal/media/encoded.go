@@ -55,7 +55,7 @@ func measureRendition(ctx context.Context, ffprobe, directory string, r Recordin
 			check = inner.check
 		}
 		name := "unknown"
-		if r.Name == "720p" || r.Name == "1080p" {
+		if r.Name == "480p" || r.Name == "720p" || r.Name == "1080p" {
 			name = r.Name
 		}
 		err = &ValidationFailure{rendition: name, segment: segment, check: check, cause: err}

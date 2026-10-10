@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
@@ -311,21 +312,18 @@ func encodeRenditions(ctx context.Context, source, staging, ffmpeg, ffprobe stri
 	}); err != nil {
 		return nil, err
 	}
-	var measured []RenditionMedia
-	for _, r := range renditions {
-		directory := filepath.Join(staging, r.Name)
+	var progressMu sync.Mutex
+	return validateRenditions(ctx, renditions, func(ctx context.Context, r RecordingRendition) (RenditionMedia, error) {
 		validationStarted := time.Now()
-		actual, err := measureRendition(ctx, ffprobe, directory, r, func(done, total int) {
+		return measureRendition(ctx, ffprobe, filepath.Join(staging, r.Name), r, func(done, total int) {
 			if progress != nil {
+				// Existing consumers need not be concurrency-safe.
+				progressMu.Lock()
+				defer progressMu.Unlock()
 				progress(EncodingProgress{Phase: "local_validation", Rendition: r.Name, Fraction: 1, SegmentsVerified: done, SegmentsTotal: total, ElapsedSeconds: time.Since(validationStarted).Seconds()})
 			}
 		})
-		if err != nil {
-			return nil, err
-		}
-		measured = append(measured, actual)
-	}
-	return measured, nil
+	})
 }
 
 func writePreparedFile(root *os.Root, path string, data []byte) error {
