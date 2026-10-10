@@ -119,3 +119,19 @@ func TestProgressPreservesNonterminalAndJSONOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestParallelValidationProgressRetainsAllRenditions(t *testing.T) {
+	var output bytes.Buffer
+	p := newProgressDisplay(&output, false, "operation", false)
+	p.interactive = true
+	p.width = func() int { return 100 }
+	for _, name := range []string{"1080p", "480p", "720p"} {
+		p.Encoding(media.EncodingProgress{Phase: "local_validation", Rendition: name, SegmentsVerified: 2, SegmentsTotal: 9})
+	}
+	for _, expected := range []string{"480p 2/9", "720p 2/9", "1080p 2/9"} {
+		if !strings.Contains(p.lastLine, expected) {
+			t.Fatalf("missing %s: %s", expected, p.lastLine)
+		}
+	}
+	p.Close()
+}

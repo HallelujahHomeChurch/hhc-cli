@@ -1,6 +1,16 @@
 # HHC CLI
 
-Recording preparation and authenticated publishing for HHC.
+The command-line interface for Hallelujah Home Church software (家教會軟體 CLI).
+Current command groups cover account access, recording workflows, installation
+and updates. Existing recording commands and JSON contracts remain compatible.
+See [command architecture](docs/command-architecture.md) to add another domain.
+
+Local HLS validation runs up to three rendition probes concurrently after
+encoding. Fragments within each rendition remain sequential for continuity
+checks. Any failure cancels and joins the other probes before cleanup; all
+renditions must pass before package finalization. Interactive progress shows
+480p/720p/1080p together, while JSON keeps its per-rendition event schema.
+Concurrency increases peak CPU/disk demand; it does not imply a threefold speedup.
 
 `recordings upload FILE --prepare --title TITLE --cover PATH` optionally selects
 a custom cover; prepared HLS directory uploads accept the same flag. The image

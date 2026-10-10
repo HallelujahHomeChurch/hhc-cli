@@ -7,24 +7,19 @@ import (
 	"strings"
 )
 
-const rootHelp = `HHC CLI — 聚會錄影上傳工具
-
-常用指令
-  auth login          登入
-  recordings upload   轉檔並上傳錄影
-  recordings resume   繼續未完成的操作
-  update              更新工具
-  version             查看版本
-
-其他操作：hhc auth -h、hhc recordings -h、hhc install -h
-查看操作方式：hhc <指令> -h
-例如：hhc recordings upload -h`
+func printRootHelp(output io.Writer) {
+	fmt.Fprintln(output, "HHC CLI — 家教會軟體命令列工具\n\n指令")
+	for _, group := range commandGroups {
+		fmt.Fprintf(output, "  %-12s %s\n", group.name, group.summary)
+	}
+	fmt.Fprintln(output, "\n查看操作方式：hhc <指令> -h\n錄影範例：hhc recordings upload -h")
+}
 
 // Help is handled before authentication, bundle verification or operation
 // creation. Only known command paths are accepted; user arguments are not echoed.
 func showHelp(args []string, output io.Writer) bool {
 	if len(args) == 0 || len(args) == 1 && slices.Contains([]string{"-h", "--help", "help"}, args[0]) {
-		fmt.Fprintln(output, rootHelp)
+		printRootHelp(output)
 		return true
 	}
 	helpArgs := args
@@ -41,7 +36,14 @@ func showHelp(args []string, output io.Writer) bool {
 		return false
 	}
 	key := args[0]
-	if key == "auth" || key == "recordings" {
+	isGroup := false
+	for _, group := range commandGroups {
+		if group.name == key {
+			isGroup = group.subcommands
+			break
+		}
+	}
+	if isGroup {
 		if len(args) > 1 && args[1] != "-h" && args[1] != "--help" {
 			key += " " + args[1]
 		} else if len(args) == 1 {

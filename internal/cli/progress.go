@@ -27,6 +27,7 @@ type progressDisplay struct {
 	active, closed bool
 	lastLine       string
 	lastWidth      int
+	validation     map[string]media.EncodingProgress
 	now            func() time.Time
 }
 
@@ -51,7 +52,19 @@ func (p *progressDisplay) Encoding(value media.EncodingProgress) {
 		return
 	}
 	if value.Phase == "local_validation" {
-		p.render("", 0, "", fmt.Sprintf("本機檢查 %s · %d/%d 片段 · 已耗%.0f秒", value.Rendition, value.SegmentsVerified, value.SegmentsTotal, value.ElapsedSeconds))
+		p.mu.Lock()
+		if p.validation == nil {
+			p.validation = make(map[string]media.EncodingProgress)
+		}
+		p.validation[value.Rendition] = value
+		parts := []string{"本機檢查"}
+		for _, name := range []string{"480p", "720p", "1080p"} {
+			if v, ok := p.validation[name]; ok {
+				parts = append(parts, fmt.Sprintf("%s %d/%d", name, v.SegmentsVerified, v.SegmentsTotal))
+			}
+		}
+		p.mu.Unlock()
+		p.render("", 0, "", strings.Join(parts, " · "))
 		return
 	}
 	fraction := value.Fraction
