@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -49,22 +50,23 @@ func TestValidateRenditionsFailureCancelsAndJoins(t *testing.T) {
 	failure := &ValidationFailure{rendition: "480p", segment: 7, check: "fragment_continuity", cause: ErrInvalidInput}
 	var started sync.WaitGroup
 	started.Add(3)
-	var exited sync.WaitGroup
-	exited.Add(2)
+	var exited atomic.Int32
 	got, err := validateRenditions(ctx, []RecordingRendition{{Name: "480p"}, {Name: "720p"}, {Name: "1080p"}}, func(ctx context.Context, r RecordingRendition) (RenditionMedia, error) {
 		started.Done()
 		started.Wait()
 		if r.Name == "480p" {
 			return RenditionMedia{}, failure
 		}
-		defer exited.Done()
+		defer exited.Add(1)
 		<-ctx.Done()
 		return RenditionMedia{}, ctx.Err()
 	})
 	if got != nil || err != failure {
 		t.Fatalf("lost original failure: %v %v", got, err)
 	}
-	exited.Wait()
+	if exited.Load() != 2 {
+		t.Fatal("returned before cancelled validators exited")
+	}
 }
 
 func TestValidateRenditionsBoundsAndCancellation(t *testing.T) {
