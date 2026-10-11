@@ -42,7 +42,7 @@ func (c *Client) PublishRecording(ctx context.Context, id string, version int64,
 		return PublishResult{}, auth.ErrInvalidAuthInput
 	}
 	var value PublishResult
-	err := c.request(ctx, http.MethodPost, "/api/admin/recordings/"+id+"/publish", "cms:recordings:publish", []byte(`{}`), http.Header{"Idempotency-Key": {key}, "If-Match": {`"` + strconv.FormatInt(version, 10) + `"`}}, &value)
+	err := c.request(ctx, "recording_publish", http.MethodPost, "/api/admin/recordings/"+id+"/publish", "cms:recordings:publish", []byte(`{}`), http.Header{"Idempotency-Key": {key}, "If-Match": {`"` + strconv.FormatInt(version, 10) + `"`}}, &value)
 	if err != nil {
 		return PublishResult{}, err
 	}
@@ -84,7 +84,7 @@ func (c *Client) SignPackage(ctx context.Context, recordingID, packageID string,
 	}
 	body, _ := json.Marshal(map[string][]string{"paths": paths})
 	var value []SignedObject
-	if err := c.request(ctx, http.MethodPost, packagePath(recordingID, packageID)+"/sign", "cms:recordings:write", body, nil, &value); err != nil {
+	if err := c.request(ctx, "package_sign", http.MethodPost, packagePath(recordingID, packageID)+"/sign", "cms:recordings:write", body, nil, &value); err != nil {
 		return nil, err
 	}
 	if len(value) != len(paths) {
@@ -123,7 +123,7 @@ func (c *Client) CreateRecording(ctx context.Context, title, key string) (Record
 	}
 	body, _ := json.Marshal(map[string]string{"title": strings.TrimSpace(title)})
 	var value Recording
-	err := c.request(ctx, http.MethodPost, "/api/admin/recordings", "cms:recordings:write", body, http.Header{"Idempotency-Key": {key}}, &value, http.StatusCreated)
+	err := c.request(ctx, "recording_create", http.MethodPost, "/api/admin/recordings", "cms:recordings:write", body, http.Header{"Idempotency-Key": {key}}, &value, http.StatusCreated)
 	if err != nil {
 		return Recording{}, err
 	}
@@ -145,7 +145,7 @@ func (c *Client) CreatePackage(ctx context.Context, recordingID string, inventor
 		return Package{}, auth.ErrInvalidAuthInput
 	}
 	var value Package
-	err = c.request(ctx, http.MethodPost, "/api/admin/recordings/"+recordingID+"/packages", "cms:recordings:write", body, http.Header{"Idempotency-Key": {key}}, &value, http.StatusCreated)
+	err = c.request(ctx, "package_create", http.MethodPost, "/api/admin/recordings/"+recordingID+"/packages", "cms:recordings:write", body, http.Header{"Idempotency-Key": {key}}, &value, http.StatusCreated)
 	if err != nil {
 		return Package{}, err
 	}
@@ -161,7 +161,7 @@ func (c *Client) PackageStatus(ctx context.Context, recordingID, packageID, curs
 	}
 	query := url.Values{"cursor": {cursor}, "limit": {"1000"}}
 	var value Package
-	err := c.request(ctx, http.MethodGet, packagePath(recordingID, packageID)+"?"+query.Encode(), "cms:recordings:read", nil, nil, &value)
+	err := c.request(ctx, "package_status", http.MethodGet, packagePath(recordingID, packageID)+"?"+query.Encode(), "cms:recordings:read", nil, nil, &value)
 	if err != nil {
 		return Package{}, err
 	}
@@ -176,7 +176,7 @@ func (c *Client) CompletePackage(ctx context.Context, recordingID, packageID str
 		return Package{}, auth.ErrInvalidAuthInput
 	}
 	var value Package
-	err := c.request(ctx, http.MethodPost, packagePath(recordingID, packageID)+"/complete", "cms:recordings:write", []byte(`{}`), nil, &value, http.StatusAccepted)
+	err := c.request(ctx, "package_complete", http.MethodPost, packagePath(recordingID, packageID)+"/complete", "cms:recordings:write", []byte(`{}`), nil, &value, http.StatusAccepted)
 	if err != nil {
 		return Package{}, err
 	}

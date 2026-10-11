@@ -30,6 +30,9 @@ type commandError struct {
 	Code              string  `json:"code"`
 	Message           string  `json:"message"`
 	Retryable         bool    `json:"retryable"`
+	Stage             string  `json:"stage,omitempty"`
+	HTTPStatus        int     `json:"httpStatus,omitempty"`
+	ServerCode        string  `json:"serverCode,omitempty"`
 	RequestID         *string `json:"requestId"`
 	ResumeOperationID *string `json:"resumeOperationId,omitempty"`
 }
@@ -44,6 +47,15 @@ func classify(err error) (string, string, int, bool) {
 		diagnostic = " HLS 驗證：" + validation.Error() + "。請保留原 operation ID 與此診斷訊息。"
 		if code == "invalid_input" {
 			message = "本機 HLS 產物驗證失敗，未確認完成。"
+		}
+	}
+	var remote *api.Error
+	if errors.As(err, &remote) {
+		if remote.Status > 0 {
+			diagnostic += fmt.Sprintf("（HTTP %d / %s）", remote.Status, code)
+		}
+		if label := recordingStageLabel(remote.Stage); label != "" {
+			message = "階段 " + label + "（" + remote.Stage + "）：" + message
 		}
 	}
 	var preparation *media.PreparationFailure
@@ -79,8 +91,18 @@ func classifyCause(err error) (string, string, int, bool) {
 		switch remote.Code {
 		case "api_unavailable", "rate_limited":
 			return remote.Code, "錄影服務暫時無法確認結果，請稍後重試。", 6, true
-		case "not_found", "operation_conflict", "state_changed":
-			return remote.Code, "錄影不存在或狀態已變更，請重新查詢。", 5, false
+		case "not_found":
+			return remote.Code, "找不到錄影或上傳資源；可能已刪除或到期。請確認錄影狀態，勿直接重建上傳。", 5, false
+		case "operation_conflict":
+			if remote.ServerCode == "recording_draft_limit" && remote.Stage == "recording_create" {
+				return remote.Code, "未完成上傳的錄影已達上限（2 筆，recording_draft_limit）。請先完成其他上傳；排除後以原 operation 執行 hhc recordings resume。", 5, false
+			}
+			return remote.Code, "操作衝突，平台未接受本次變更。請確認現有錄影與操作狀態，保留原 operation，勿重新 upload。", 5, false
+		case "state_changed":
+			if remote.Status == 428 {
+				return remote.Code, "缺少版本前提，平台未接受本次變更。請確認 CLI 版本並保留原 operation。", 5, false
+			}
+			return remote.Code, "錄影版本已變更，平台未接受本次變更。請重新查詢，勿覆蓋其他人的修改。", 5, false
 		}
 	}
 	switch {
@@ -148,5 +170,32 @@ func classifyCause(err error) (string, string, int, bool) {
 		return "invalid_auth_response", "驗證回應不符合可信契約。", 6, false
 	default:
 		return "unknown_error", "操作失敗，尚未確認完成。", 1, false
+	}
+}
+
+func recordingStageLabel(stage string) string {
+	switch stage {
+	case "recording_create":
+		return "建立錄影"
+	case "recording_get":
+		return "查詢錄影"
+	case "package_create":
+		return "建立上傳套件"
+	case "package_status":
+		return "查詢上傳與驗證進度"
+	case "package_sign":
+		return "取得上傳授權"
+	case "package_complete":
+		return "提交上傳完成"
+	case "recording_publish":
+		return "發布錄影"
+	case "cover_list":
+		return "查詢縮圖"
+	case "cover_upload":
+		return "上傳縮圖"
+	case "cover_select":
+		return "選取縮圖"
+	default:
+		return ""
 	}
 }

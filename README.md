@@ -328,3 +328,16 @@ tests; cross-compilation does not run them on the target OS.
 
 The Asset producer golden digest is pinned in tests. Cross-compilation checks
 are not native Windows/macOS media, credential or update acceptance.
+
+Recording API failures report the request stage and HTTP status. Missing resources
+(404), conflicts (409), changed versions (412), and missing preconditions (428)
+have separate messages. When CMS returns `recording_draft_limit`, creation reports
+the two unfinished ordinary-upload limit; broadcast drafts do not consume it.
+Resolve the cause and use `hhc recordings resume OPERATION_ID` with the original
+operation instead of starting another upload. Older servers returning a generic
+409 remain an unspecified conflict; the CLI does not guess a quota failure.
+
+JSON error results retain schema 1, existing `code`, exit status, retryability and
+`resumeOperationId`, with optional `stage`, `httpStatus` and `serverCode` diagnostics.
+Only recognized server codes are retained; response messages, tokens and signed
+URLs are never printed or persisted.

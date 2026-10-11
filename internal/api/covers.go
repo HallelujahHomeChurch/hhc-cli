@@ -45,7 +45,7 @@ func (c *Client) ListCovers(ctx context.Context, id string) (CoverList, error) {
 		return CoverList{}, auth.ErrInvalidAuthInput
 	}
 	var value CoverList
-	if err := c.request(ctx, http.MethodGet, "/api/admin/recordings/"+id+"/covers", "cms:recordings:read", nil, nil, &value); err != nil {
+	if err := c.request(ctx, "cover_list", http.MethodGet, "/api/admin/recordings/"+id+"/covers", "cms:recordings:read", nil, nil, &value); err != nil {
 		return value, err
 	}
 	if value.RecordingVersion < 1 || len(value.Items) > 1000 || value.SelectedCoverID != "" && !coverID.MatchString(value.SelectedCoverID) {
@@ -64,7 +64,7 @@ func (c *Client) UploadCover(ctx context.Context, id string, data []byte, conten
 	}
 	headers := http.Header{"Content-Type": {contentType}, "Idempotency-Key": {key}}
 	var value CoverUpload
-	if err := c.request(ctx, http.MethodPost, "/api/admin/recordings/"+id+"/cover-uploads", "cms:recordings:write", data, headers, &value, 202); err != nil {
+	if err := c.request(ctx, "cover_upload", http.MethodPost, "/api/admin/recordings/"+id+"/cover-uploads", "cms:recordings:write", data, headers, &value, 202); err != nil {
 		return value, err
 	}
 	if !coverID.MatchString(value.UploadID) || (value.State != "pending" && value.State != "processing" && value.State != "ready") {
@@ -82,7 +82,7 @@ func (c *Client) SelectCover(ctx context.Context, id, uploadID string, version i
 	}{"custom", uploadID})
 	headers := http.Header{"If-Match": {strconv.Quote(strconv.FormatInt(version, 10))}, "Idempotency-Key": {key}}
 	var value CoverSelection
-	if err := c.request(ctx, http.MethodPut, "/api/admin/recordings/"+id+"/cover", "cms:recordings:write", body, headers, &value); err != nil {
+	if err := c.request(ctx, "cover_select", http.MethodPut, "/api/admin/recordings/"+id+"/cover", "cms:recordings:write", body, headers, &value); err != nil {
 		return value, err
 	}
 	if value.Recording.ID != id || value.Recording.Version < 1 || !coverID.MatchString(value.CoverID) || !coverID.MatchString(value.Receipt.CoverID) || value.Receipt.RecordingVersion < 1 || (value.Outcome != "selected" && value.Outcome != "state_changed") {
