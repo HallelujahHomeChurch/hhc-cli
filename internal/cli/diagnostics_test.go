@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/media"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/update"
@@ -79,5 +82,50 @@ func TestHLSValidationReportsSafeCheckWithoutChangingRecovery(t *testing.T) {
 	code, message, _, _ = classify(&media.PreparationFailure{Stage: "encode_nvenc", Cause: cause})
 	if !errors.Is(cause, media.ErrInvalidInput) || code != "invalid_input" || !strings.Contains(message, "segment=0 check=fragment_read") || strings.Contains(message, directory) {
 		t.Fatalf("missing safe fragment diagnostic: %s %s", code, message)
+	}
+}
+
+func TestRecordingRemoteDiagnosticsDistinguishFailures(t *testing.T) {
+	for _, tc := range []struct {
+		code   string
+		status int
+		server string
+		want   string
+	}{
+		{"not_found", 404, "", "找不到錄影"},
+		{"operation_conflict", 409, "", "操作衝突"},
+		{"operation_conflict", 409, "recording_draft_limit", "未完成上傳的錄影已達上限"},
+		{"state_changed", 412, "", "錄影版本已變更"},
+		{"state_changed", 428, "", "缺少版本前提"},
+	} {
+		code, message, exit, retry := classify(&api.Error{Code: tc.code, Status: tc.status, Stage: "recording_create", ServerCode: tc.server})
+		if code != tc.code || exit != 5 || retry || !strings.Contains(message, tc.want) || !strings.Contains(message, "建立錄影") || !strings.Contains(message, "HTTP ") {
+			t.Fatalf("diagnostic: %s %q %d %v", code, message, exit, retry)
+		}
+	}
+}
+
+func TestRecordingDiagnosticsJSONPreservesRecovery(t *testing.T) {
+	var out, diagnostic bytes.Buffer
+	operationID := "6e06211c-7713-4ca7-b689-1b19dde16959"
+	c := commandContext{output: &out, diagnostics: &diagnostic, jsonMode: true, result: result{SchemaVersion: 1, OperationID: &operationID}}
+	exit := c.finish(&api.Error{Code: "operation_conflict", Status: 409, Stage: "recording_create", ServerCode: "recording_draft_limit"})
+	var got result
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if exit != 5 || got.OK || got.SchemaVersion != 1 || got.Error == nil {
+		t.Fatalf("unexpected result: %s", out.String())
+	}
+	e := got.Error
+	if e.Code != "operation_conflict" || e.Stage != "recording_create" || e.HTTPStatus != 409 || e.ServerCode != "recording_draft_limit" || e.ResumeOperationID == nil || *e.ResumeOperationID != operationID || e.Retryable || diagnostic.Len() != 0 {
+		t.Fatalf("lost diagnostics/recovery: %s", out.String())
+	}
+}
+
+func TestQuotaDiagnosticDoesNotMislabelAnotherStage(t *testing.T) {
+	_, message, _, _ := classify(&api.Error{Code: "operation_conflict", Status: 409, Stage: "package_complete", ServerCode: "recording_draft_limit"})
+	if strings.Contains(message, "已達上限") || !strings.Contains(message, "提交上傳完成") {
+		t.Fatal(message)
 	}
 }

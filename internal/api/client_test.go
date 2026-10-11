@@ -151,3 +151,28 @@ func TestGetBoundsUnauthorizedRetryAndRejectsInvalidID(t *testing.T) {
 		t.Fatalf("unbounded unauthorized retry: %v calls=%d grants=%d", err, calls, *grants)
 	}
 }
+
+func TestRecordingCreateErrorRetainsOnlySafeDiagnostics(t *testing.T) {
+	for _, tc := range []struct{ name, body, server string }{
+		{"quota", `{"error":{"code":"recording_draft_limit","message":"private-secret"}}`, "recording_draft_limit"},
+		{"unknown", `{"error":{"code":"private-secret","message":"private-secret"}}`, ""},
+		{"malformed", `private-secret`, ""},
+		{"oversize", strings.Repeat(" ", 65537) + `{"error":{"code":"recording_draft_limit"}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _ := apiFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(409)
+				fmt.Fprint(w, tc.body)
+			}, false, "cms:recordings:write")
+			_, err := client.CreateRecording(context.Background(), "Gathering", "operation:create")
+			var remote *Error
+			if !errors.As(err, &remote) || remote.Code != "operation_conflict" || remote.Status != 409 || remote.Stage != "recording_create" || remote.ServerCode != tc.server {
+				t.Fatalf("diagnostic: %+v", err)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", remote), "private-secret") {
+				t.Fatal("unsafe response echoed")
+			}
+		})
+	}
+}

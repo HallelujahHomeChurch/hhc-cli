@@ -26,6 +26,8 @@ var recordID = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]
 
 type Error struct {
 	Code       string
+	Stage      string
+	ServerCode string
 	Status     int
 	RetryAfter time.Duration
 }
@@ -80,7 +82,7 @@ func (c *Client) GetRecording(ctx context.Context, id string) (Recording, error)
 		return Recording{}, auth.ErrInvalidAuthInput
 	}
 	var value Recording
-	err := c.request(ctx, http.MethodGet, "/api/admin/recordings/"+id, "cms:recordings:read", nil, nil, &value)
+	err := c.request(ctx, "recording_get", http.MethodGet, "/api/admin/recordings/"+id, "cms:recordings:read", nil, nil, &value)
 	if err != nil {
 		return Recording{}, err
 	}
@@ -109,7 +111,13 @@ func (c *Client) refresh(ctx context.Context) error {
 // Control calls are serialized; presigned byte uploads use a separate client.
 // Mutations never auto-retry on network/5xx: the operation owner reconciles
 // server state using its durable key before deciding the next action.
-func (c *Client) request(ctx context.Context, method, path, scope string, body []byte, headers http.Header, result any, expectedStatus ...int) error {
+func (c *Client) request(ctx context.Context, stage, method, path, scope string, body []byte, headers http.Header, result any, expectedStatus ...int) (requestErr error) {
+	defer func() {
+		var remote *Error
+		if errors.As(requestErr, &remote) {
+			remote.Stage = stage
+		}
+	}()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -167,7 +175,44 @@ func (c *Client) request(ctx context.Context, method, path, scope string, body [
 	return auth.ErrAuthenticationRequired
 }
 
-func decodeResponse(response *http.Response, result any, expectedStatus ...int) error {
+func decodeResponse(response *http.Response, result any, expectedStatus ...int) (responseErr error) {
+	defer func() {
+		var remote *Error
+		if !errors.As(responseErr, &remote) {
+			return
+		}
+		contentType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		if err != nil || contentType != "application/json" {
+			return
+		}
+		data, err := io.ReadAll(io.LimitReader(response.Body, 65537))
+		if err != nil || len(data) > 65536 {
+			return
+		}
+		var envelope struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(data, &envelope) != nil {
+			return
+		}
+		// Only recognized codes are safe to retain; never retain server messages.
+		switch envelope.Error.Code {
+		case "recording_draft_limit", "recording_conflict":
+			if remote.Status == 409 {
+				remote.ServerCode = envelope.Error.Code
+			}
+		case "recording_version_changed":
+			if remote.Status == 412 {
+				remote.ServerCode = envelope.Error.Code
+			}
+		case "not_found":
+			if remote.Status == 404 {
+				remote.ServerCode = envelope.Error.Code
+			}
+		}
+	}()
 	status := http.StatusOK
 	if len(expectedStatus) == 1 {
 		status = expectedStatus[0]

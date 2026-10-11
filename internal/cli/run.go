@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/api"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/auth"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/update"
 )
@@ -114,6 +116,13 @@ func (c *commandContext) finish(err error) int {
 	if err != nil {
 		code, message, status, retryable := classify(err)
 		r.Error = &commandError{Code: code, Message: message, Retryable: retryable, ResumeOperationID: r.OperationID}
+		var remote *api.Error
+		if errors.As(err, &remote) {
+			r.Error.HTTPStatus, r.Error.ServerCode = remote.Status, remote.ServerCode
+			if recordingStageLabel(remote.Stage) != "" {
+				r.Error.Stage = remote.Stage
+			}
+		}
 		exit = status
 	}
 	r.OK = err == nil
