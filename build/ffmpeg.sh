@@ -59,6 +59,15 @@ fetch_x264_source() {
   tar -xOf "$recovery_archive" source/x264.tar.bz2 > "$1" || return 1
   verify_hash "$source_sha" "$1"
 }
+fetch_amf_source() {
+  local source_sha=570c8f6593b8c24a6e47a0a9c59b216a7198138e660ba4011590ae913343d5c3
+  # Upstream replaced the same-named asset; retain the shipped source version.
+  local recovery_archive="${1}.v1.1.4.zip"
+  fetch "$recovery_archive" https://github.com/HallelujahHomeChurch/hhc-cli/releases/download/v1.1.4/hhc_1.1.4_windows_amd64.zip || return 1
+  verify_hash 699d50c69c027068b94030fe9ac82eedda41fafc01a52be17163b99a23ac4822 "$recovery_archive" || return 1
+  unzip -p "$recovery_archive" source/amf-headers.tar.gz > "$1" || return 1
+  verify_hash "$source_sha" "$1"
+}
 
 fetch sources/ffmpeg.tar.xz https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz
 verify_hash 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3 sources/ffmpeg.tar.xz
@@ -74,8 +83,7 @@ tar -xf sources/x264.tar.bz2
 if test "$media_suffix" = .exe; then
   fetch sources/nv-codec-headers.tar.gz https://github.com/FFmpeg/nv-codec-headers/releases/download/n13.1.15.0/nv-codec-headers-13.1.15.0.tar.gz
   verify_hash 52532ceade3d5c1af62624986f13cf01b63c910576b08c0c278756c5e4b41ad0 sources/nv-codec-headers.tar.gz
-  fetch sources/amf-headers.tar.gz https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v1.5.3/AMF-headers-v1.5.3.tar.gz
-  verify_hash 570c8f6593b8c24a6e47a0a9c59b216a7198138e660ba4011590ae913343d5c3 sources/amf-headers.tar.gz
+  fetch_amf_source sources/amf-headers.tar.gz
   fetch sources/libvpl.tar.gz https://codeload.github.com/intel/libvpl/tar.gz/refs/tags/v2.17.0
   verify_hash 4de3e2faf1e8307fb282e4a43f443191810f6a6b0a484fffa7995ba1c814c6ec sources/libvpl.tar.gz
   tar -xf sources/nv-codec-headers.tar.gz

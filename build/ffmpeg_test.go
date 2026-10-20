@@ -2,6 +2,7 @@ package build
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -12,6 +13,72 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestAMFRecoveryUsesOnlyPinnedSource(t *testing.T) {
+	for _, tool := range []string{"bash", "unzip"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip("recipe requires " + tool)
+		}
+	}
+	for _, scenario := range []string{"valid", "outer mismatch", "inner mismatch", "missing member", "fetch failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			var archive bytes.Buffer
+			writer := zip.NewWriter(&archive)
+			member, content := "source/amf-headers.tar.gz", "pinned source"
+			if scenario == "missing member" {
+				member = "source/other.tar.gz"
+			}
+			if scenario == "inner mismatch" {
+				content = "changed source"
+			}
+			for name, data := range map[string]string{member: content, "hhc.exe": "must not be extracted"} {
+				file, err := writer.Create(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := file.Write([]byte(data)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			outer := fmt.Sprintf("%x", sha256.Sum256(archive.Bytes()))
+			if scenario == "outer mismatch" {
+				outer = strings.Repeat("0", 64)
+			}
+			functions := strings.ReplaceAll(recipeFunctions(t), "699d50c69c027068b94030fe9ac82eedda41fafc01a52be17163b99a23ac4822", outer)
+			functions = strings.ReplaceAll(functions, "570c8f6593b8c24a6e47a0a9c59b216a7198138e660ba4011590ae913343d5c3", fmt.Sprintf("%x", sha256.Sum256([]byte("pinned source"))))
+			directory := t.TempDir()
+			if err := os.WriteFile(filepath.Join(directory, "fixture.zip"), archive.Bytes(), 0600); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command("bash", "-c", functions+`
+fetch() {
+ test "$2" = https://github.com/HallelujahHomeChurch/hhc-cli/releases/download/v1.1.4/hhc_1.1.4_windows_amd64.zip || return 90
+ test "$fetch_failure" != true || return 1
+ cp fixture.zip "$1"
+}
+fetch_amf_source source.tar.gz
+`)
+			command.Dir = directory
+			command.Env = append(os.Environ(), fmt.Sprintf("fetch_failure=%t", scenario == "fetch failure"))
+			output, err := command.CombinedOutput()
+			if (err == nil) != (scenario == "valid") {
+				t.Fatalf("unexpected result: %v %s", err, output)
+			}
+			if scenario == "valid" {
+				data, err := os.ReadFile(filepath.Join(directory, "source.tar.gz"))
+				if err != nil || string(data) != "pinned source" {
+					t.Fatal("wrong source accepted", err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(directory, "hhc.exe")); !os.IsNotExist(err) {
+				t.Fatal("recovery extracted executable", err)
+			}
+		})
+	}
+}
 
 func recipeFunctions(t *testing.T) string {
 	t.Helper()

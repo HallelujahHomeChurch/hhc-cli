@@ -30,7 +30,7 @@ external dependencies, run actual media/CLI tests and embed binary hashes
 before a bundle is eligible for a separately signed application release.
 Hardware encoders are not qualified merely because a build includes them.
 
-Windows pins NVIDIA headers13.1.15.0, AMD AMF headers1.5.3 and Intel libvpl2.17.0,
+Windows pins NVIDIA headers13.1.15.0, the original AMD AMF archive and Intel libvpl2.17.0,
 each verified by SHA-256. The headers and static dispatcher enable the three
 candidate backends; GPU drivers themselves are not bundled. Corresponding
 sources/notices accompany the bundle. Older or absent drivers fail the actual
@@ -38,6 +38,11 @@ probe and use CPU; neither encoder-list detection nor a hosted CI build proves
 hardware availability. See the [AMF build instructions](https://github.com/GPUOpen-LibrariesAndSDKs/AMF/wiki/Build-FFmpeg-with-AMF-Support),
 [Intel libvpl source](https://github.com/intel/libvpl), and
 [NVIDIA codec headers](https://github.com/FFmpeg/nv-codec-headers).
+AMF replaced its `v1.5.3` release archive on 2026-10-16. We retain the original
+archive shipped in CLI v1.1.4 (whose Version.h reports 1.5.2), verifying both the
+fixed release ZIP and the inner source digest. Only the source member is read;
+no old executable is extracted or run. Updating these headers is a separate
+media compatibility change.
 The included one-line [libvpl MinGW compatibility patch](https://github.com/intel/libvpl/pull/198)
 restricts legacy MSVC macros to MSVC; MinGW retains its bounded CRT functions.
 The patch accompanies the corresponding source and build recipe.

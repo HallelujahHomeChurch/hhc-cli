@@ -14,19 +14,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Exit codes 71-76 identify supervisor guards without exposing tool arguments or stderr.
 func superviseMedia() int {
 	// Never signal a caller's terminal/process group when invoked manually.
 	if unix.Getpgrp() != os.Getpid() {
-		return 1
+		return 71
 	}
 	control, input, status := os.NewFile(3, "owner-lifetime"), os.NewFile(4, "tool-request"), os.NewFile(5, "tool-status")
 	for _, file := range []*os.File{control, input, status} {
 		if file == nil {
-			return 1
+			return 72
 		}
 		info, err := file.Stat()
 		if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
-			return 1
+			return 73
 		}
 		unix.CloseOnExec(int(file.Fd())) // Media descendants must not inherit control/status capabilities.
 	}
@@ -36,11 +37,11 @@ func superviseMedia() int {
 	var request supervisorRequest
 	data, err := io.ReadAll(io.LimitReader(input, 65537))
 	if err != nil || len(data) > 65536 || json.Unmarshal(data, &request) != nil || !filepath.IsAbs(request.Binary) || strings.ContainsRune(request.Binary, 0) {
-		return 1
+		return 74
 	}
 	for _, arg := range request.Args {
 		if strings.ContainsRune(arg, 0) {
-			return 1
+			return 75
 		}
 	}
 	// The owner alone holds the pipe's writing end. EOF also covers SIGKILL,
@@ -60,6 +61,9 @@ func superviseMedia() int {
 	status.Write(binary.BigEndian.AppendUint16([]byte{result}, uint16(exitCode+1)))
 	// Killing our own dedicated group also reaps media grandchildren. The
 	// parent accepts this deliberate signal only with the separate status byte.
-	unix.Kill(-os.Getpid(), unix.SIGKILL)
-	return 1
+	if err := unix.Kill(-os.Getpid(), unix.SIGKILL); err != nil {
+		return 76
+	}
+	// macOS may deliver SIGKILL asynchronously; do not race it with os.Exit.
+	select {}
 }
