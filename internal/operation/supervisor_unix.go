@@ -61,6 +61,9 @@ func superviseMedia() int {
 	status.Write(binary.BigEndian.AppendUint16([]byte{result}, uint16(exitCode+1)))
 	// Killing our own dedicated group also reaps media grandchildren. The
 	// parent accepts this deliberate signal only with the separate status byte.
-	unix.Kill(-os.Getpid(), unix.SIGKILL)
-	return 76
+	if err := unix.Kill(-os.Getpid(), unix.SIGKILL); err != nil {
+		return 76
+	}
+	// macOS may deliver SIGKILL asynchronously; do not race it with os.Exit.
+	select {}
 }
