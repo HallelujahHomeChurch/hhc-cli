@@ -148,7 +148,10 @@ func TestNativeAutoPrepareAlignedPackage(t *testing.T) {
 		return
 	}
 	if err != nil {
-		t.Fatalf("%v; cause=%v", err, errors.Unwrap(err))
+		var tool *operation.ProcessFailure
+		errors.As(err, &tool)
+		t.Fatalf("%v; cause=%v; tool=%v; deadline=%t; output_limit=%t",
+			err, errors.Unwrap(err), tool, errors.Is(err, context.DeadlineExceeded), errors.Is(err, operation.ErrProcessOutputLimit))
 	}
 	if len(value.Inventory.Renditions) != 3 || value.ActualEncoder == "" {
 		t.Fatal("incomplete auto package")
