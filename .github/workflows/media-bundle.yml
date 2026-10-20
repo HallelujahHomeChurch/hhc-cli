@@ -10,6 +10,7 @@ on:
       - build/**
       - internal/bundle/**
       - internal/media/**
+      - internal/operation/**
       - internal/update/**
       - cmd/hhc-release/**
       - skills/hhc/**
