@@ -80,6 +80,23 @@ class MediaCacheTest(unittest.TestCase):
                 result = subprocess.run(["bash", "-eu", "-c", script], env=env, capture_output=True)
                 self.assertEqual(accepted, result.returncode == 0)
 
+    def test_native_and_cross_option_arrays_work_with_nounset(self):
+        recipe = Path(__file__).with_name("ffmpeg.sh").read_text()
+        prefix = recipe.split("# Bound parallel compilation", 1)[0]
+        for system, arch in (("Darwin", "arm64"), ("MINGW64_NT", "x86_64"), ("Linux", "aarch64")):
+            with self.subTest(system=system):
+                script = f'uname() {{ case "$1" in -s) echo {system};; -m) echo {arch};; esac; }};\n' + prefix
+                script += '\nprintf "x264:%s\\n" "${media_x264_platform[@]}"; printf "cmake:%s\\n" "${media_cmake_platform[@]}"'
+                output = subprocess.run(["bash", "-eu", "-c", script, "recipe", str(self.root / system)],
+                    env=dict(os.environ, MEDIA_TARGET="windows-amd64"), capture_output=True, text=True)
+                self.assertEqual(0, output.returncode, output.stderr)
+                if system == "Linux":
+                    self.assertIn("--host=x86_64-w64-mingw32", output.stdout)
+                    self.assertIn("-DCMAKE_TOOLCHAIN_FILE=", output.stdout)
+                else:
+                    self.assertNotIn("--host=", output.stdout)
+                    self.assertNotIn("-DCMAKE_TOOLCHAIN_FILE=", output.stdout)
+
     def test_native_compile_parallelism_is_bounded_by_cpus(self):
         recipe = Path(__file__).with_name("ffmpeg.sh").read_text()
         code = recipe.split("# Bound parallel compilation", 1)[1].split('\ncd "$media_build"', 1)[0]

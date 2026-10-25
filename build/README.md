@@ -95,7 +95,9 @@ not cancelled. Measure all workflows/attempts for a SHA and runner time by platf
 a warm cache comparison does not establish the cold-build latency or dollar cost.
 See [GitHub cache isolation](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache).
 
-The previous native Windows cold run exceeded 15 minutes. Linux cross-build has
-passed local compatibility checks, but hosted end-to-end cold latency (including
-queues, transfer and native validation) must be measured before claiming the
-10-minute target or 15-minute limit. No paid runner is required by this design.
+Acceptance prioritizes total runner occupancy and maintainability. Cold builds
+and toolchain-change rebuilds may exceed 15 minutes; warm PR validation targets
+10 minutes with a 15-minute upper bound, including queue and all workflows for
+the source commit. No paid runners are authorized. The cross-build path must
+show a meaningful total occupancy benefit while preserving native validation;
+local compatibility timings alone do not establish that benefit.

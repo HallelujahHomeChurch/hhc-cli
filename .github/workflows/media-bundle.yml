@@ -37,6 +37,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Verify build controls with macOS shell
+        run: python3 -m unittest discover -s build -p 'test_*.py'
       - name: Install macOS build prerequisites
         run: brew install pkgconf nasm gnupg
       - name: Identify macOS toolchain

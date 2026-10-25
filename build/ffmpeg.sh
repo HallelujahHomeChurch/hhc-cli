@@ -9,8 +9,10 @@ test ! -e "$media_build"
 mkdir -p "$media_build"
 media_build=$(cd "$media_build" && pwd)
 media_recipe=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-media_x264_platform=()
-media_cmake_platform=()
+# Keep a common option in each array: macOS Bash 3.2 treats an empty array as
+# unset under set -u, even when expanded with [@].
+media_x264_platform=(--prefix="$media_build/prefix")
+media_cmake_platform=(-DCMAKE_INSTALL_LIBDIR=lib)
 case "$(uname -s)" in
   Darwin)
     test "$(uname -m)" = arm64
@@ -25,8 +27,8 @@ case "$(uname -s)" in
     media_cflags="-I$media_build/prefix/include"
     media_ldflags='-static'
     media_platform=(--enable-cross-compile --cross-prefix=x86_64-w64-mingw32- --host-cc=gcc --target-os=mingw32 --arch=x86_64 --enable-w32threads --disable-pthreads --enable-ffnvcodec --enable-nvenc --enable-amf --enable-libvpl)
-    media_x264_platform=(--host=x86_64-w64-mingw32 --cross-prefix=x86_64-w64-mingw32-)
-    media_cmake_platform=(-DCMAKE_TOOLCHAIN_FILE="$(dirname "$media_recipe")/windows-toolchain.cmake")
+    media_x264_platform+=(--host=x86_64-w64-mingw32 --cross-prefix=x86_64-w64-mingw32-)
+    media_cmake_platform+=(-DCMAKE_TOOLCHAIN_FILE="$(dirname "$media_recipe")/windows-toolchain.cmake")
     ;;
   MINGW*|MSYS*)
     test "$(uname -m)" = x86_64
@@ -112,7 +114,7 @@ if test "$media_suffix" = .exe; then
   cmake "${media_cmake_platform[@]}" -G Ninja -S libvpl-2.17.0 -B vpl-build \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$media_build/prefix" \
     -DVPL_PKGCONFIG_PRIVATE_LIBS=-lstdc++ \
-    -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF \
+    -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF \
     -DBUILD_EXAMPLES=OFF -DINSTALL_EXAMPLES=OFF -DBUILD_EXPERIMENTAL=OFF
   cmake --build vpl-build --parallel "$media_jobs"
   cmake --install vpl-build
@@ -125,7 +127,7 @@ if test "$media_suffix" = .exe; then
 fi
 
 cd x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55
-./configure "${media_x264_platform[@]}" --prefix="$media_build/prefix" --enable-static --enable-pic --disable-cli --disable-opencl --bit-depth=8 --extra-cflags="$media_cflags" --extra-ldflags="$media_ldflags"
+./configure "${media_x264_platform[@]}" --enable-static --enable-pic --disable-cli --disable-opencl --bit-depth=8 --extra-cflags="$media_cflags" --extra-ldflags="$media_ldflags"
 make -j "$media_jobs"
 make install-lib-static
 cd ../ffmpeg-8.1.3
