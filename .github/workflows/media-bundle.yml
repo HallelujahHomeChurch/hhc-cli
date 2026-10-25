@@ -5,6 +5,11 @@ on:
       version:
         type: string
         required: true
+  push:
+    branches: [main]
+    paths:
+      - build/**
+      - .github/workflows/media-bundle.yml
   pull_request:
     paths:
       - build/**
@@ -16,6 +21,9 @@ on:
       - skills/hhc/**
       - .github/workflows/media-bundle.yml
       - .github/workflows/release.yml
+concurrency:
+  group: media-bundle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -45,10 +53,39 @@ jobs:
             mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+      - name: Identify macOS toolchain
+        if: runner.os == 'macOS'
+        run: bash build/media-toolchain.sh > "$RUNNER_TEMP/media-toolchain.txt"
+      - name: Identify Windows toolchain
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash build/media-toolchain.sh > "$(cygpath -u "$RUNNER_TEMP")/media-toolchain.txt"
+      - name: Identify native build inputs
+        id: inputs
+        shell: bash
+        run: |
+          key="$(python3 build/media-cache.py key "$RUNNER_TEMP/media-toolchain.txt")"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Restore exact native media bundle
+        id: media_cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ runner.temp }}/media-bundle/bundle
+            ${{ runner.temp }}/media-bundle/cache-manifest.json
+          key: ${{ steps.inputs.outputs.key }}
+      - name: Verify cached input identity and every file before execution
+        if: steps.media_cache.outputs.cache-hit == 'true'
+        shell: bash
+        env:
+          MEDIA_INPUT_KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 build/media-cache.py verify "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY"
       - name: Build and verify macOS bundle
         if: runner.os == 'macOS'
         run: |
-          bash build/ffmpeg.sh "$RUNNER_TEMP/media-bundle"
+          if [ "${{ steps.media_cache.outputs.cache-hit }}" != true ]; then
+            bash build/ffmpeg.sh "$RUNNER_TEMP/media-bundle"
+          fi
           otool -L "$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffmpeg"
           otool -L "$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffprobe"
           for tool in ffmpeg ffprobe; do
@@ -65,7 +102,9 @@ jobs:
         shell: msys2 {0}
         run: |
           media_build="$(cygpath -u "$RUNNER_TEMP")/media-bundle"
-          bash build/ffmpeg.sh "$media_build"
+          if [ "${{ steps.media_cache.outputs.cache-hit }}" != true ]; then
+            bash build/ffmpeg.sh "$media_build"
+          fi
           # Available backends are not proof of a working GPU/driver. Windows
           # uses NVENC directly and fails closed rather than changing devices.
           "$media_build/bundle/ffmpeg/ffmpeg.exe" -hide_banner -encoders > "$media_build/encoders.txt"
@@ -95,13 +134,15 @@ jobs:
         env:
           HHC_RELEASE_PUBLIC_KEY: ${{ vars.HHC_RELEASE_PUBLIC_KEY }}
           HHC_BUILD_VERSION: ${{ inputs.version || '0.0.0' }}
+          HHC_RELEASE_VERSION: ${{ inputs.version }}
         run: |
           if [ -z "$HHC_RELEASE_PUBLIC_KEY" ]; then
-            if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            if [ -n "$HHC_RELEASE_VERSION" ] || { [ "$GITHUB_EVENT_NAME" != pull_request ] &&
+              ! { [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; }; }; then
               echo 'Release trust key must be provisioned before release' >&2
               exit 1
             fi
-            # Public test-only key; PR bundles are never published as releases.
+            # Public test-only key; PR/cache-warming bundles are never published.
             export HHC_RELEASE_PUBLIC_KEY=0101010101010101010101010101010101010101010101010101010101010101
           fi
           go run ./cmd/hhc-release package --version "$HHC_BUILD_VERSION" \
@@ -113,6 +154,22 @@ jobs:
           path: ${{ runner.temp }}/release/hhc_*
           if-no-files-found: error
           retention-days: 7
+      - name: Seal tested bundle for reuse
+        if: steps.media_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          MEDIA_INPUT_KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 build/media-cache.py seal "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY"
+      # GitHub keeps PR-created caches on their merge ref; releases can only
+      # restore their own ref or the trusted default-branch cache.
+      - name: Cache verified native tools and corresponding sources
+        if: steps.media_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ runner.temp }}/media-bundle/bundle
+            ${{ runner.temp }}/media-bundle/cache-manifest.json
+          key: ${{ steps.inputs.outputs.key }}
       - name: Retain failed build diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

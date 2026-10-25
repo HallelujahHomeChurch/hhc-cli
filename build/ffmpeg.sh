@@ -27,6 +27,10 @@ case "$(uname -s)" in
   *) echo 'supported builders: macOS arm64 or Windows MSYS2 x64' >&2; exit 2;;
 esac
 
+# Bound parallel compilation to the native runner's available CPUs (at most 4).
+if test "$(uname -s)" = Darwin; then media_jobs=$(sysctl -n hw.logicalcpu); else media_jobs=$(nproc); fi
+if test "$media_jobs" -gt 4; then media_jobs=4; fi
+
 cd "$media_build"
 mkdir gpg
 # The keyring contains only the public release key. NTFS runner ACLs do not
@@ -99,7 +103,7 @@ if test "$media_suffix" = .exe; then
     -DVPL_PKGCONFIG_PRIVATE_LIBS=-lstdc++ \
     -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF \
     -DBUILD_EXAMPLES=OFF -DINSTALL_EXAMPLES=OFF -DBUILD_EXPERIMENTAL=OFF
-  cmake --build vpl-build --parallel 3
+  cmake --build vpl-build --parallel "$media_jobs"
   cmake --install vpl-build
   cp sources/nv-codec-headers.tar.gz sources/amf-headers.tar.gz sources/libvpl.tar.gz bundle/source/
   cp "$(dirname "$media_recipe")/libvpl-mingw.patch" bundle/source/
@@ -111,7 +115,7 @@ fi
 
 cd x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55
 ./configure --prefix="$media_build/prefix" --enable-static --enable-pic --disable-cli --disable-opencl --bit-depth=8 --extra-cflags="$media_cflags" --extra-ldflags="$media_ldflags"
-make -j 3
+make -j "$media_jobs"
 make install-lib-static
 cd ../ffmpeg-8.1.3
 PKG_CONFIG_PATH="$media_build/prefix/lib/pkgconfig" ./configure \
@@ -119,7 +123,7 @@ PKG_CONFIG_PATH="$media_build/prefix/lib/pkgconfig" ./configure \
   --disable-shared --enable-static --disable-network --disable-ffplay --disable-doc \
   --disable-debug --extra-cflags="$media_cflags" \
   --extra-ldflags="$media_ldflags" --pkg-config-flags=--static "${media_platform[@]}"
-make -j 3 ffmpeg"$media_suffix" ffprobe"$media_suffix"
+make -j "$media_jobs" ffmpeg"$media_suffix" ffprobe"$media_suffix"
 cp ffmpeg"$media_suffix" ffprobe"$media_suffix" "$media_build/bundle/ffmpeg/"
 cp COPYING.GPLv2 "$media_build/bundle/licenses/FFmpeg-GPLv2.txt"
 cp config.h config_components.h ffbuild/config.mak "$media_build/bundle/source/"

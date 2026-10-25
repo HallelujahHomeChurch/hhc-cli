@@ -50,3 +50,26 @@ The patch accompanies the corresponding source and build recipe.
 Primary references: [FFmpeg download/signatures](https://ffmpeg.org/download.html),
 [FFmpeg license](https://ffmpeg.org/legal.html),
 [x264 source](https://code.videolan.org/videolan/x264).
+
+## CI reuse
+
+Native media bundles are cached by the complete recipe/patch/workflow/helper
+identity, OS/architecture, runner image and installed compiler/build-tool versions.
+There are no prefix restore keys. Before executing a restored tool, CI verifies
+its input key and SHA-256 inventory, including corresponding sources and licenses;
+missing, additional, changed or linked files fail the job. This detects corruption;
+cache authenticity relies on GitHub's branch/ref isolation, not on the manifest
+being a signature. PR caches cannot populate the default-branch or release scope.
+
+Changes under `build/` or to the media workflow warm the default-branch cache
+once merged. This adds native runner work on those main pushes; it never publishes
+a release. Tags can reuse matching main-cache tools, but still build the current
+CLI/version and run native dependency, media and archive verification. Native
+checks also run on cache hits. Installed toolchain or runner-image changes cause
+a full rebuild; cache eviction and cold builds remain possible. Compilation uses
+available CPUs capped at four without changing enabled codecs or libraries.
+
+PR workflows cancel superseded runs. Tag release and main cache-warming runs are
+not cancelled. Measure all workflows/attempts for a SHA and runner time by platform;
+a warm cache comparison does not establish the cold-build latency or dollar cost.
+See [GitHub cache isolation](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache).

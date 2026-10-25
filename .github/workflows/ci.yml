@@ -1,6 +1,9 @@
 name: CI
 on:
   pull_request:
+concurrency:
+  group: cli-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -32,6 +35,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Test media cache identity and integrity
+        run: python3 -m unittest discover -s build -p 'test_media_cache.py'
       - name: Install media test fixtures (not the release bundle)
         run: |
           sudo apt-get update
