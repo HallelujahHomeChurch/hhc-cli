@@ -8,6 +8,17 @@ case "$(uname -s)" in
     clang --version
     brew list --versions pkgconf nasm gnupg
     ;;
+  Linux)
+    test "${MEDIA_TARGET:?explicit target required}" = windows-amd64
+    uname -sm
+    dpkg-query -W
+    x86_64-w64-mingw32-gcc -v 2>&1
+    x86_64-w64-mingw32-g++ -v 2>&1
+    x86_64-w64-mingw32-ld --version
+    x86_64-w64-mingw32-windres --version
+    gcc --version
+    cmake --version
+    ;;
   MINGW*|MSYS*)
     gcc --version
     ld --version

@@ -4,6 +4,15 @@ Run `bash build/ffmpeg.sh /absolute/new/build-directory` on macOS arm64 or
 Windows x64 MSYS2/MinGW64 with a C toolchain, make, pkg-config, nasm, curl,
 tar and GnuPG. The destination must not exist; failed builds remain inspectable.
 Windows also requires C++, CMake and Ninja for the static Intel dispatcher.
+CI builds the Windows media tools on Linux using `build/windows-media.Dockerfile`
+(a digest-pinned Debian base and MinGW win32/MSVCRT toolchain). Mount this repository
+at `/src` and a disposable directory at `/work`, then run
+`bash /src/build/ffmpeg.sh /work/media-bundle` inside that image. Its explicit
+`MEDIA_TARGET=windows-amd64` prevents confusing build-host and target platforms.
+Installed package/compiler versions, the Dockerfile and CMake toolchain accompany
+the sources. Package repository updates invalidate the build fingerprint; the
+base pin alone is not a fully frozen package snapshot. Cross-produced executables
+must still pass actual Windows checks; Linux never runs them through Wine.
 
 The recipe pins FFmpeg 8.1.3 and x264 stable commit
 `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`, verifies archive SHA-256 and the
@@ -53,13 +62,25 @@ Primary references: [FFmpeg download/signatures](https://ffmpeg.org/download.htm
 
 ## CI reuse
 
-Native media bundles are cached by the complete recipe/patch/workflow/helper
-identity, OS/architecture, runner image and installed compiler/build-tool versions.
+Prepared media bundles use a new cache namespace keyed by the complete
+recipe/patch/workflow/helper identity, explicit output target, builder OS/architecture,
+runner image and installed compiler/build-tool versions. Windows keys therefore
+identify the Linux builder, MinGW CRT/thread model and target, not the consumer's
+native compiler. macOS remains independently built and verified on macOS.
 There are no prefix restore keys. Before executing a restored tool, CI verifies
 its input key and SHA-256 inventory, including corresponding sources and licenses;
 missing, additional, changed or linked files fail the job. This detects corruption;
 cache authenticity relies on GitHub's branch/ref isolation, not on the manifest
 being a signature. PR caches cannot populate the default-branch or release scope.
+
+The Windows producer uploads a same-run artifact. Its consumer requires one exact
+artifact ID, then verifies the source commit, target, input identity and every
+file before execution. A prepared cache entry is not native acceptance: Windows
+always performs encoder/dependency checks, the complete media/CLI race suite and
+native CLI packaging/self-check. Windows installs GCC for Go race instrumentation
+and binutils for PE inspection; source-build tooling stays on Linux. Only the
+existing release publish job signs
+artifacts; neither the producer nor PR validation receives a signing key.
 
 Changes under `build/` or to the media workflow warm the default-branch cache
 once merged. This adds native runner work on those main pushes; it never publishes
@@ -73,3 +94,8 @@ PR workflows cancel superseded runs. Tag release and main cache-warming runs are
 not cancelled. Measure all workflows/attempts for a SHA and runner time by platform;
 a warm cache comparison does not establish the cold-build latency or dollar cost.
 See [GitHub cache isolation](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache).
+
+The previous native Windows cold run exceeded 15 minutes. Linux cross-build has
+passed local compatibility checks, but hosted end-to-end cold latency (including
+queues, transfer and native validation) must be measured before claiming the
+10-minute target or 15-minute limit. No paid runner is required by this design.
