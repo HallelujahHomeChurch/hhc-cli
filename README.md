@@ -12,6 +12,11 @@ renditions must pass before package finalization. Interactive progress shows
 480p/720p/1080p together, while JSON keeps its per-rendition event schema.
 Concurrency increases peak CPU/disk demand; it does not imply a threefold speedup.
 
+Preparation preserves the planned container duration when track tails differ:
+short audio is padded with silence and short video holds its final frame until
+the shared output limit. Rendition, playlist and packet validation tolerances
+remain unchanged; longer audio is not discarded to match a shorter video track.
+
 `recordings upload FILE --prepare --title TITLE --cover PATH` optionally selects
 a custom cover; prepared HLS directory uploads accept the same flag. The image
 must be a regular JPEG/PNG file, at most 5 MiB, 24 MP and 8192 pixels per edge,

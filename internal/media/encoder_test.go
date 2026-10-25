@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -72,6 +73,24 @@ func TestCPUEncodeProducesAlignedThirtySecondVOD(t *testing.T) {
 }
 
 func TestMultiEncodePadsEarlyAudioAtTheFinalFragment(t *testing.T) {
+	testMultiEncodePadsEarlyTrack(t, "37.24", "37.08", "libx264")
+}
+
+func TestMultiEncodePadsEarlyVideoAtTheFinalFragment(t *testing.T) {
+	// A fractional-rate video ends about 80 ms before the audio-led container,
+	// as in the reported rendition_duration failure. Preserve the audio tail.
+	t.Run("CPU", func(t *testing.T) {
+		testMultiEncodePadsEarlyTrack(t, "37.17", "37.25", "libx264")
+	})
+	if runtime.GOOS == "windows" && os.Getenv("HHC_REQUIRE_HARDWARE") == "1" {
+		t.Run("NVENC", func(t *testing.T) {
+			testMultiEncodePadsEarlyTrack(t, "37.17", "37.25", "h264_nvenc")
+		})
+	}
+}
+
+func testMultiEncodePadsEarlyTrack(t *testing.T, videoDuration, audioDuration, encoder string) {
+	t.Helper()
 	ffmpeg, ffprobe := os.Getenv("HHC_TEST_FFMPEG"), os.Getenv("HHC_TEST_FFPROBE")
 	if ffmpeg == "" || ffprobe == "" {
 		if os.Getenv("HHC_REQUIRE_MEDIA_TESTS") == "1" {
@@ -82,13 +101,17 @@ func TestMultiEncodePadsEarlyAudioAtTheFinalFragment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	dir := t.TempDir()
-	source := filepath.Join(dir, "early-audio.mp4")
-	// Ordinary recordings can end their audio track before the final video
-	// frame. Exercise a non-integral tail after the first 30-second boundary.
-	fixture := []string{"-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=1920x1080:r=30000/1001:d=37.24", "-f", "lavfi", "-i", "sine=sample_rate=48000:duration=37.08", "-c:v", "libx264", "-preset", "ultrafast", "-bf", "0", "-c:a", "aac", source}
+	source := filepath.Join(t.TempDir(), "early-track.mp4")
+	// Exercise unequal track tails after the first 30-second boundary.
+	fixture := []string{"-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=1920x1080:r=30000/1001:d=" + videoDuration, "-f", "lavfi", "-i", "sine=sample_rate=48000:duration=" + audioDuration, "-c:v", "libx264", "-preset", "ultrafast", "-bf", "0", "-c:a", "aac", source}
 	if out, err := exec.CommandContext(ctx, ffmpeg, fixture...).CombinedOutput(); err != nil {
 		t.Fatalf("fixture: %v %s", err, out)
 	}
+	original, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(original)
 	info, err := ProbeSource(ctx, ffprobe, source)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +125,7 @@ func TestMultiEncodePadsEarlyAudioAtTheFinalFragment(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	args, err := multiEncodeArguments(source, dir, plan.Renditions, "libx264")
+	args, err := multiEncodeArguments(source, dir, plan.Renditions, encoder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,15 +136,31 @@ func TestMultiEncodePadsEarlyAudioAtTheFinalFragment(t *testing.T) {
 	for _, r := range plan.Renditions {
 		actual, err := MeasureRendition(ctx, ffprobe, filepath.Join(dir, r.Name), r)
 		if err != nil {
-			t.Fatalf("short source audio rejected for %s: %v", r.Name, err)
+			t.Fatalf("short source track rejected for %s: %v", r.Name, err)
 		}
 		if len(actual.SegmentBytes) != 2 {
 			t.Fatal("lost the final fragment", r.Name)
 		}
 		measured = append(measured, actual)
+		wrongDuration := r
+		wrongDuration.DurationSeconds += 0.08
+		if _, err := MeasureRendition(ctx, ffprobe, filepath.Join(dir, r.Name), wrongDuration); err == nil || !strings.Contains(err.Error(), "rendition_duration") {
+			t.Fatalf("accepted an incorrect 80 ms duration for %s: %v", r.Name, err)
+		}
 	}
-	if _, err := BuildMasterPlaylist(measured); err != nil {
+	master, err := BuildMasterPlaylist(measured)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "master.m3u8"), master, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildPackageInventory(ctx, dir, plan.Renditions, "tail-padding-v1"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(source)
+	if err != nil || sha256.Sum256(after) != hash {
+		t.Fatal("source changed")
 	}
 }
 
