@@ -86,7 +86,7 @@ func TestPrepareCPUPreservesSourceAndAtomicallyCreatesPackage(t *testing.T) {
 	}
 	value, err := PrepareCPU(ctx, source, output, ffmpeg, ffprobe, options, nil)
 	if err != nil || len(value.Inventory.Renditions) != 3 || value.SourceFingerprint.SHA256 != fmt.Sprintf("%x", hash) || value.ActualEncoder != "libx264" {
-		t.Fatalf("prepare: %+v %v", value, err)
+		t.Fatalf("prepare: %+v %v; cause=(%T) %v", value, err, errors.Unwrap(err), errors.Unwrap(err))
 	}
 	if progress["720p+1080p+480p"] < .99 {
 		t.Fatalf("did not stream shared encoding progress: %+v", progress)

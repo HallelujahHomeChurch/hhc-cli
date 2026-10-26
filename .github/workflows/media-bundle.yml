@@ -5,6 +5,11 @@ on:
       version:
         type: string
         required: true
+  push:
+    branches: [main]
+    paths:
+      - build/**
+      - .github/workflows/media-bundle.yml
   pull_request:
     paths:
       - build/**
@@ -16,39 +21,53 @@ on:
       - skills/hhc/**
       - .github/workflows/media-bundle.yml
       - .github/workflows/release.yml
+concurrency:
+  group: media-bundle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
-  build:
+  macos:
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, windows-2025]
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
+    env:
+      MEDIA_TARGET: darwin-arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Verify build controls with macOS shell
+        run: python3 -m unittest discover -s build -p 'test_*.py'
       - name: Install macOS build prerequisites
-        if: runner.os == 'macOS'
         run: brew install pkgconf nasm gnupg
-      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
-        if: runner.os == 'Windows'
-        with:
-          msystem: MINGW64
-          update: true
-          path-type: inherit
-          install: >-
-            make tar unzip curl gnupg diffutils patch
-            mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
-      - name: Build and verify macOS bundle
-        if: runner.os == 'macOS'
+      - name: Identify macOS toolchain
+        run: bash build/media-toolchain.sh > "$RUNNER_TEMP/media-toolchain.txt"
+      - name: Identify native build inputs
+        id: inputs
+        shell: bash
         run: |
-          bash build/ffmpeg.sh "$RUNNER_TEMP/media-bundle"
+          key="$(python3 build/media-cache.py key "$RUNNER_TEMP/media-toolchain.txt")"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Restore exact native media bundle
+        id: media_cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ runner.temp }}/media-bundle/bundle
+            ${{ runner.temp }}/media-bundle/cache-manifest.json
+          key: ${{ steps.inputs.outputs.key }}
+      - name: Verify cached input identity and every file before execution
+        if: steps.media_cache.outputs.cache-hit == 'true'
+        shell: bash
+        env:
+          MEDIA_INPUT_KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 build/media-cache.py verify "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY"
+      - name: Build and verify macOS bundle
+        run: |
+          if [ "${{ steps.media_cache.outputs.cache-hit }}" != true ]; then
+            bash build/ffmpeg.sh "$RUNNER_TEMP/media-bundle"
+          fi
           otool -L "$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffmpeg"
           otool -L "$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffprobe"
           for tool in ffmpeg ffprobe; do
@@ -60,12 +79,185 @@ jobs:
           HHC_TEST_FFMPEG="$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffmpeg" \
           HHC_TEST_FFPROBE="$RUNNER_TEMP/media-bundle/bundle/ffmpeg/ffprobe" \
           HHC_REQUIRE_MEDIA_TESTS=1 go test -race ./internal/media ./internal/cli -count=1
-      - name: Build and verify Windows bundle
-        if: runner.os == 'Windows'
+      - name: Retain verified bundle with corresponding sources
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: media-bundle-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/media-bundle/bundle
+          if-no-files-found: error
+          retention-days: 7
+      - name: Package and verify native CLI release
+        shell: bash
+        env:
+          HHC_RELEASE_PUBLIC_KEY: ${{ vars.HHC_RELEASE_PUBLIC_KEY }}
+          HHC_BUILD_VERSION: ${{ inputs.version || '0.0.0' }}
+          HHC_RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -z "$HHC_RELEASE_PUBLIC_KEY" ]; then
+            if [ -n "$HHC_RELEASE_VERSION" ] || { [ "$GITHUB_EVENT_NAME" != pull_request ] &&
+              ! { [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; }; }; then
+              echo 'Release trust key must be provisioned before release' >&2
+              exit 1
+            fi
+            # Public test-only key; PR/cache-warming bundles are never published.
+            export HHC_RELEASE_PUBLIC_KEY=0101010101010101010101010101010101010101010101010101010101010101
+          fi
+          go run ./cmd/hhc-release package --version "$HHC_BUILD_VERSION" \
+            --directory "$RUNNER_TEMP/release" --bundle "$RUNNER_TEMP/media-bundle/bundle"
+      - name: Retain verified native application artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hhc-release-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/release/hhc_*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Seal tested bundle for reuse
+        if: steps.media_cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          MEDIA_INPUT_KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 build/media-cache.py seal "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY"
+      # GitHub keeps PR-created caches on their merge ref; releases can only
+      # restore their own ref or the trusted default-branch cache.
+      - name: Cache verified native tools and corresponding sources
+        if: steps.media_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ runner.temp }}/media-bundle/bundle
+            ${{ runner.temp }}/media-bundle/cache-manifest.json
+          key: ${{ steps.inputs.outputs.key }}
+      - name: Retain failed build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: media-build-diagnostics-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            ${{ runner.temp }}/media-bundle/ffmpeg-8.1.3/ffbuild/config.log
+            ${{ runner.temp }}/media-bundle/x264-*/config.log
+          if-no-files-found: ignore
+          retention-days: 7
+  prepare_windows:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    env:
+      MEDIA_TARGET: windows-amd64
+    outputs:
+      artifact_id: ${{ steps.bundle.outputs.artifact-id }}
+      input_key: ${{ steps.inputs.outputs.key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Prepare pinned Linux cross toolchain
+        run: |
+          docker build --file build/windows-media.Dockerfile --tag hhc-media-builder .
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" hhc-media-builder \
+            bash /src/build/media-toolchain.sh > "$RUNNER_TEMP/media-toolchain.txt"
+      - name: Identify Windows target and Linux builder inputs
+        id: inputs
+        run: |
+          key="$(python3 build/media-cache.py key "$RUNNER_TEMP/media-toolchain.txt")"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Restore exact prepared Windows bundle
+        id: media_cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ runner.temp }}/media-bundle/bundle
+            ${{ runner.temp }}/media-bundle/cache-manifest.json
+          key: ${{ steps.inputs.outputs.key }}
+      - name: Verify cached input identity and every file
+        if: steps.media_cache.outputs.cache-hit == 'true'
+        env:
+          MEDIA_INPUT_KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 build/media-cache.py verify "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY"
+      - name: Cross-build Windows media with corresponding sources
+        if: steps.media_cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP:/work" \
+            hhc-media-builder bash /src/build/ffmpeg.sh /work/media-bundle
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/media-bundle"
+      - name: Seal prepared bundle
+        if: steps.media_cache.outputs.cache-hit != 'true'
+        env:
+          MEDIA_INPUT_KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 build/media-cache.py seal "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY"
+      # Prepared build cache is never native acceptance; Windows always tests it.
+      # PR cache entries remain isolated from main/release refs.
+      - name: Cache prepared tools and corresponding sources
+        if: steps.media_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ runner.temp }}/media-bundle/bundle
+            ${{ runner.temp }}/media-bundle/cache-manifest.json
+          key: ${{ steps.inputs.outputs.key }}
+      - name: Bind same-run handoff to source and target
+        env:
+          MEDIA_INPUT_KEY: ${{ steps.inputs.outputs.key }}
+        run: python3 build/media-cache.py handoff "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY" "$GITHUB_SHA" "$MEDIA_TARGET"
+      - name: Upload exact Windows producer artifact
+        id: bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-media-prepared-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/media-bundle/bundle
+            ${{ runner.temp }}/media-bundle/cache-manifest.json
+            ${{ runner.temp }}/media-bundle/handoff.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain failed Windows cross-build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: media-build-diagnostics-Linux-Windows-X64-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/media-toolchain.txt
+            ${{ runner.temp }}/media-bundle/ffmpeg-8.1.3/ffbuild/config.log
+            ${{ runner.temp }}/media-bundle/x264-*/config.log
+            ${{ runner.temp }}/media-bundle/vpl-build/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+          retention-days: 7
+  windows:
+    needs: prepare_windows
+    timeout-minutes: 30
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          # GCC is required by Go -race; binutils supplies PE objdump.
+          # Source compilation and source GPG verification run only on Linux.
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+      - name: Validate producer outputs
+        shell: bash
+        env:
+          MEDIA_ARTIFACT_ID: ${{ needs.prepare_windows.outputs.artifact_id }}
+          MEDIA_INPUT_KEY: ${{ needs.prepare_windows.outputs.input_key }}
+        run: |
+          [[ "$MEDIA_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$MEDIA_INPUT_KEY" =~ ^media-v2-[0-9a-f]{64}$ ]] || exit 1
+      - name: Download exact same-run Windows producer artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare_windows.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/media-bundle
+      - name: Verify producer identity and every file before execution
+        shell: bash
+        env:
+          MEDIA_INPUT_KEY: ${{ needs.prepare_windows.outputs.input_key }}
+        run: python3 build/media-cache.py verify-handoff "$RUNNER_TEMP/media-bundle" "$MEDIA_INPUT_KEY" "$GITHUB_SHA" windows-amd64
+      - name: Verify Windows bundle natively
         shell: msys2 {0}
         run: |
           media_build="$(cygpath -u "$RUNNER_TEMP")/media-bundle"
-          bash build/ffmpeg.sh "$media_build"
           # Available backends are not proof of a working GPU/driver. Windows
           # uses NVENC directly and fails closed rather than changing devices.
           "$media_build/bundle/ffmpeg/ffmpeg.exe" -hide_banner -encoders > "$media_build/encoders.txt"
@@ -95,13 +287,15 @@ jobs:
         env:
           HHC_RELEASE_PUBLIC_KEY: ${{ vars.HHC_RELEASE_PUBLIC_KEY }}
           HHC_BUILD_VERSION: ${{ inputs.version || '0.0.0' }}
+          HHC_RELEASE_VERSION: ${{ inputs.version }}
         run: |
           if [ -z "$HHC_RELEASE_PUBLIC_KEY" ]; then
-            if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            if [ -n "$HHC_RELEASE_VERSION" ] || { [ "$GITHUB_EVENT_NAME" != pull_request ] &&
+              ! { [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; }; }; then
               echo 'Release trust key must be provisioned before release' >&2
               exit 1
             fi
-            # Public test-only key; PR bundles are never published as releases.
+            # Public test-only key; PR/cache-warming bundles are never published.
             export HHC_RELEASE_PUBLIC_KEY=0101010101010101010101010101010101010101010101010101010101010101
           fi
           go run ./cmd/hhc-release package --version "$HHC_BUILD_VERSION" \
@@ -112,14 +306,4 @@ jobs:
           name: hhc-release-${{ runner.os }}-${{ runner.arch }}
           path: ${{ runner.temp }}/release/hhc_*
           if-no-files-found: error
-          retention-days: 7
-      - name: Retain failed build diagnostics
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: media-build-diagnostics-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            ${{ runner.temp }}/media-bundle/ffmpeg-8.1.3/ffbuild/config.log
-            ${{ runner.temp }}/media-bundle/x264-*/config.log
-          if-no-files-found: ignore
           retention-days: 7
