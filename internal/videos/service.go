@@ -66,16 +66,17 @@ type Page struct {
 	Coverage string  `json:"coverage"`
 }
 type Failure struct {
-	Code       string `json:"code"`
-	HTTPStatus int    `json:"httpStatus,omitempty"`
-	Retryable  bool   `json:"retryable"`
+	CallerAuthority bool   `json:"-"`
+	Code            string `json:"code"`
+	HTTPStatus      int    `json:"httpStatus,omitempty"`
+	Retryable       bool   `json:"retryable"`
 }
 
 func (e *Failure) Error() string { return e.Code }
 func SafeFailure(err error) *Failure {
 	var f *Failure
 	if errors.As(err, &f) {
-		return &Failure{Code: f.Code, HTTPStatus: f.HTTPStatus, Retryable: f.Retryable}
+		return &Failure{Code: f.Code, HTTPStatus: f.HTTPStatus, Retryable: f.Retryable, CallerAuthority: f.CallerAuthority}
 	}
 	if errors.Is(err, context.Canceled) {
 		return &Failure{Code: "cancelled"}
@@ -104,9 +105,25 @@ type Provider interface {
 	Search(context.Context, Input) (Page, error)
 	Get(context.Context, string, Input) (Page, error)
 }
-type Service struct{ HHC, YouTube Provider }
+
+// Service shares bounded provider queries between the CLI and MCP adapters.
+type Service struct {
+	HHC, YouTube Provider
+	// SourceTimeout is a trusted composition setting, never a tool argument. Its
+	// default/max 20 seconds leaves time in the outer 30-second HTTP budget for
+	// authorization and final revocation checks.
+	SourceTimeout time.Duration
+}
 
 func (s Service) Execute(ctx context.Context, tool string, in Input) (Result, error) {
+	callerContext := ctx
+	sourceTimeout := 20 * time.Second
+	if s.SourceTimeout != 0 {
+		if s.SourceTimeout < 0 || s.SourceTimeout > sourceTimeout {
+			return Result{}, ErrInput
+		}
+		sourceTimeout = s.SourceTimeout
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	out := Result{Sources: []SourceResult{}, ObservedAt: time.Now().UTC()}
@@ -152,17 +169,22 @@ func (s Service) Execute(ctx context.Context, tool string, in Input) (Result, er
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			sourceContext, sourceCancel := context.WithTimeout(ctx, sourceTimeout)
+			defer sourceCancel()
 			r := SourceResult{Source: n.name, Page: Page{Items: []Video{}}}
 			var err error
 			if n.p == nil {
 				err = FailureCode("not_configured")
 			} else if tool == "get_video" {
 				_, id, _ := strings.Cut(in.ID, ":")
-				r.Page, err = n.p.Get(ctx, id, in)
+				r.Page, err = n.p.Get(sourceContext, id, in)
 			} else if tool == "compare_publication" && n.name == "youtube" {
-				r.Page, err = n.p.Get(ctx, in.YouTubeVideoID, in)
+				r.Page, err = n.p.Get(sourceContext, in.YouTubeVideoID, in)
 			} else {
-				r.Page, err = n.p.Search(ctx, in)
+				r.Page, err = n.p.Search(sourceContext, in)
+			}
+			if sourceContext.Err() != nil && (err == nil || !SafeFailure(err).CallerAuthority) {
+				err = sourceContext.Err()
 			}
 			if err != nil {
 				r.Error = SafeFailure(err)
@@ -176,7 +198,7 @@ func (s Service) Execute(ctx context.Context, tool string, in Input) (Result, er
 		}()
 	}
 	wg.Wait()
-	if err = ctx.Err(); err != nil {
+	if err = callerContext.Err(); err != nil {
 		return Result{}, err
 	}
 	for _, r := range out.Sources {

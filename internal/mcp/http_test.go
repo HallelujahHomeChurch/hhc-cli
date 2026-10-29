@@ -171,3 +171,87 @@ func TestCancellationNotificationPolicyOperation(t *testing.T) {
 		t.Fatalf("%s %v", Operation(r), err)
 	}
 }
+
+func fixtureOAuthConfig() OAuthConfig {
+	return OAuthConfig{ResourceURL: "https://query.test/mcp", AuthorizationServers: []string{"https://issuer.example"}, ScopesSupported: []string{"videos:read"}}
+}
+func TestProtectedResourceDiscoveryAndChallenges(t *testing.T) {
+	config := fixtureOAuthConfig()
+	server, err := NewServerWithOAuth(&identityFixture{}, []string{"query.test"}, nil, "fixture", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Constructor retains immutable configuration, not a caller-owned slice.
+	config.AuthorizationServers[0] = "https://mutated.example"
+	config.ScopesSupported[0] = "unapproved"
+	for _, path := range []string{"/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource"} {
+		response := request(server, http.MethodGet, path, "", "")
+		var metadata protectedResourceMetadata
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &metadata) != nil || metadata.Resource != "https://query.test/mcp" || len(metadata.AuthorizationServers) != 1 || metadata.AuthorizationServers[0] != "https://issuer.example" || !reflect.DeepEqual(metadata.ScopesSupported, []string{"videos:read"}) || !reflect.DeepEqual(metadata.BearerMethodsSupported, []string{"header"}) {
+			t.Fatalf("discovery response: %d %s", response.Code, response.Body.String())
+		}
+		if head := request(server, http.MethodHead, path, "", ""); head.Code != 200 || head.Body.Len() != 0 {
+			t.Fatal("metadata HEAD", head.Code)
+		}
+		if post := request(server, http.MethodPost, path, "", ""); post.Code != 405 {
+			t.Fatal("metadata mutation accepted")
+		}
+	}
+	response := request(server, http.MethodPost, "/mcp", call, "")
+	challenge := response.Header().Get("WWW-Authenticate")
+	if response.Code != 401 || !strings.Contains(challenge, `resource_metadata="https://query.test/.well-known/oauth-protected-resource/mcp"`) || !strings.Contains(challenge, `scope="videos:read"`) {
+		t.Fatalf("no discovery challenge: %d %s", response.Code, challenge)
+	}
+	response = request(server, http.MethodPost, "/mcp", call, "invalid")
+	if response.Code != 401 || !strings.Contains(response.Header().Get("WWW-Authenticate"), `error="invalid_token"`) {
+		t.Fatal("invalid token challenge", response.Code)
+	}
+	r := httptest.NewRequest(http.MethodPost, "http://query.test/mcp", strings.NewReader(call))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json, text/event-stream")
+	r.Header.Set("Authorization", "bearer fixture-caller-a")
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("case-insensitive scheme rejected: %d", w.Code)
+	}
+}
+func TestOAuthDiscoveryConfigurationFailsClosed(t *testing.T) {
+	for _, mutate := range []func(*OAuthConfig){func(c *OAuthConfig) { c.ResourceURL = "http://query.test/mcp" }, func(c *OAuthConfig) { c.ResourceURL = "https://query.test/other" }, func(c *OAuthConfig) { c.ResourceURL = "https://unaccepted.example/mcp" }, func(c *OAuthConfig) { c.ResourceURL = "https://user:fixture@query.test/mcp" }, func(c *OAuthConfig) { c.ResourceURL = "https://query.test/mcp?injected=1" }, func(c *OAuthConfig) { c.AuthorizationServers = nil }, func(c *OAuthConfig) { c.AuthorizationServers = []string{"http://issuer.example"} }, func(c *OAuthConfig) { c.ScopesSupported = []string{`read",injected="value`} }, func(c *OAuthConfig) { c.ScopesSupported = []string{"read write"} }, func(c *OAuthConfig) { c.ScopesSupported = nil }} {
+		config := fixtureOAuthConfig()
+		mutate(&config)
+		if _, err := NewServerWithOAuth(&identityFixture{}, []string{"query.test"}, nil, "fixture", config); err == nil {
+			t.Fatal("unsafe OAuth discovery config accepted")
+		}
+	}
+}
+
+type insufficientScopeIdentity struct{ identityFixture }
+
+func (*insufficientScopeIdentity) Authorize(context.Context, string, string) (queryruntime.Binding, error) {
+	return queryruntime.Binding{}, videos.FailureCode("insufficient_scope")
+}
+func TestInsufficientScopeChallenge(t *testing.T) {
+	server, err := NewServerWithOAuth(&insufficientScopeIdentity{}, []string{"query.test"}, nil, "fixture", fixtureOAuthConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := request(server, http.MethodPost, "/mcp", call, "fixture-caller-a")
+	challenge := response.Header().Get("WWW-Authenticate")
+	if response.Code != 403 || !strings.Contains(challenge, `error="insufficient_scope"`) || !strings.Contains(challenge, `scope="videos:read"`) {
+		t.Fatalf("insufficient scope response: %d %s", response.Code, challenge)
+	}
+}
+
+type revokedQueryIdentity struct{ identityFixture }
+
+func (f *revokedQueryIdentity) Query(context.Context, queryruntime.Binding, string, videos.Input) (videos.Result, error) {
+	return videos.Result{}, &videos.Failure{Code: "authentication_required", CallerAuthority: true}
+}
+func TestRevokedCallerDuringQueryReturns401WithoutData(t *testing.T) {
+	s := NewServer(&revokedQueryIdentity{}, []string{"query.test"}, nil, "test")
+	w := request(s, "POST", "/mcp", call, "fixture-caller-a")
+	if w.Code != 401 || w.Body.Len() != 0 || !strings.Contains(w.Header().Get("WWW-Authenticate"), "invalid_token") {
+		t.Fatal("revoked caller response", w.Code, w.Body.String())
+	}
+}

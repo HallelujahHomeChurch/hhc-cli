@@ -104,6 +104,9 @@ func Handle(ctx context.Context, r Request, query Query, version string) Respons
 		if len(p.Arguments) == 0 {
 			p.Arguments = json.RawMessage(`{}`)
 		}
+		if raw := bytes.TrimSpace(p.Arguments); len(raw) == 0 || raw[0] != '{' {
+			return fail(-32602, "Invalid tool parameters")
+		}
 		if strict(p.Arguments, &in) != nil {
 			return fail(-32602, "Invalid tool parameters")
 		}
@@ -154,6 +157,12 @@ func tools() []any {
 	return []any{tool("search_videos", "Search authorized video metadata; inspect complete and error for each source.", search, nil), tool("get_video", "Read video details in the authorized source and channel.", get, []string{"id"}), tool("compare_publication", "Compare exact YouTube ID against HHC website metadata. not_observed means missing from this bounded observation only.", compare, []string{"youtubeVideoId"})}
 }
 func ServeStdio(ctx context.Context, input io.Reader, output io.Writer, query Query, version string) error {
+	// Native stdio owns an interruptible file/pipe. Close that read endpoint on
+	// cancellation so an idle scanner cannot keep the process alive.
+	if closer, ok := input.(io.Closer); ok {
+		stop := context.AfterFunc(ctx, func() { closer.Close() })
+		defer stop()
+	}
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 4096), 65537)
 	encoder := json.NewEncoder(output)
@@ -174,6 +183,9 @@ func ServeStdio(ctx context.Context, input io.Reader, output io.Writer, query Qu
 		if encoder.Encode(Handle(ctx, r, query, version)) != nil {
 			return io.ErrClosedPipe
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if scanner.Err() != nil {
 		return videos.FailureCode("invalid_mcp_input")

@@ -48,7 +48,8 @@ commands for domains that do not exist yet.
 
 `commands_videos.go` adapts public local queries and stdio MCP to `internal/videos`.
 The HTTP `cmd/hhc-query` process shares that service through `internal/mcp`, with
-source-specific providers and a deployment-injected identity broker. It has no
+source-specific providers and an embedded identity broker with shared PostgreSQL state (or an explicitly
+configured external adapter). It has no
 native credential/media/operation startup. Keep the existing native CLI entry and
 recording permissions separate. See [query boundaries](video-query.md) and the
 [broker contract](video-query-broker.md); HTTP hosting does not change native

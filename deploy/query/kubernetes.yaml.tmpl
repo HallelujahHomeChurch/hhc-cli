@@ -1,6 +1,6 @@
-# REVIEW PREVIEW ONLY. Render reviewed digest/host/namespace/broker settings before
+# REVIEW PREVIEW ONLY. Render reviewed digest/host/namespace/identity settings before
 # validation. No provider, cluster, credential, OAuth grant or paid resource is
-# selected or provisioned by this template. Broker implementation is a prerequisite.
+# selected or provisioned by this template. Embedded PostgreSQL broker is included; actual identity/DB setup requires approval.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,8 +40,12 @@ spec:
           image: ${QUERY_IMAGE_DIGEST}
           ports: [{name: http, containerPort: 8080}]
           env:
-            - {name: HHC_QUERY_HOSTS, value: '${QUERY_HOST},hhc-query'}
-            - {name: HHC_QUERY_BROKER_SOCKET, value: /run/broker/identity.sock}
+            - {name: HHC_QUERY_CONFIG, value: /etc/hhc-query/config.json}
+            - name: HHC_QUERY_RUNTIME_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ${APPROVED_RUNTIME_SECRET_NAME}
+                  key: runtime.json
           resources:
             requests: {cpu: 100m, memory: 64Mi}
             limits: {cpu: '1', memory: 256Mi}
@@ -50,7 +54,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           volumeMounts:
-            - {name: broker-socket, mountPath: /run/broker, readOnly: true}
+            - {name: config, mountPath: /etc/hhc-query, readOnly: true}
           livenessProbe:
             httpGet:
               path: /health/live
@@ -62,20 +66,20 @@ spec:
               port: http
               httpHeaders: [{name: Host, value: hhc-query}]
             timeoutSeconds: 3
-        # A reviewed broker adapter, using the target's managed identity/secret
-        # store and shared token-refresh fencing/quota coordination. No secret
-        # environment values or volumes are specified here.
-        - name: identity-broker
-          image: ${BROKER_IMAGE_DIGEST}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: {drop: [ALL]}
-          volumeMounts:
-            - {name: broker-socket, mountPath: /run/broker}
       volumes:
-        - name: broker-socket
-          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+        - name: config
+          configMap:
+            name: hhc-query-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hhc-query-config
+  namespace: ${NAMESPACE}
+data:
+  config.json: |
+    {"resourceUrl":"https://${QUERY_HOST}/mcp","issuer":"${APPROVED_ISSUER}","introspectionUrl":"${APPROVED_INTROSPECTION_URL}","requiredScope":"${APPROVED_QUERY_SCOPE}","clientId":"${APPROVED_RESOURCE_CLIENT_ID}","hosts":["${QUERY_HOST}","hhc-query"],"origins":[]}
+
 ---
 apiVersion: v1
 kind: Service

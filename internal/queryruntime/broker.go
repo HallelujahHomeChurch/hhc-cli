@@ -21,9 +21,10 @@ import (
 )
 
 type Binding struct {
-	CallerID  string `json:"callerId"`
-	BindingID string `json:"bindingId"`
-	HHC       struct {
+	callerBearer string
+	CallerID     string `json:"callerId"`
+	BindingID    string `json:"bindingId"`
+	HHC          struct {
 		Enabled bool   `json:"enabled"`
 		Access  string `json:"access"`
 	} `json:"hhc"`
@@ -33,7 +34,23 @@ type Binding struct {
 		ChannelID string `json:"channelId"`
 	} `json:"youtube"`
 }
+
+func (Binding) String() string     { return "[redacted caller binding]" }
+func (b Binding) GoString() string { return b.String() }
+
+type Backend interface {
+	Ready(context.Context) error
+	Authorize(context.Context, string, string) (Binding, error)
+	Credential(context.Context, Binding, string, string, string) (Credential, error)
+	Permit(context.Context, Binding, string, string, string, string, int) error
+}
+
+func NewEmbedded(backend Backend) *Broker {
+	return &Broker{backend: backend, newUpstream: queryhttp.New}
+}
+
 type Broker struct {
+	backend     Backend
 	client      *http.Client
 	newUpstream func(string) *queryhttp.Client
 }
@@ -79,7 +96,7 @@ func (b *Broker) request(ctx context.Context, path, bearer string, body, out any
 		if resp.StatusCode == 429 {
 			code = "rate_limited"
 		}
-		return &videos.Failure{Code: code, HTTPStatus: resp.StatusCode, Retryable: resp.StatusCode >= 500 || resp.StatusCode == 429}
+		return &videos.Failure{Code: code, HTTPStatus: resp.StatusCode, Retryable: resp.StatusCode >= 500 || resp.StatusCode == 429, CallerAuthority: resp.StatusCode == 401 || resp.StatusCode == 403}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16385))
 	if err != nil || len(raw) > 16384 {
@@ -94,6 +111,9 @@ func (b *Broker) request(ctx context.Context, path, bearer string, body, out any
 	return nil
 }
 func (b *Broker) Ready(ctx context.Context) error {
+	if b.backend != nil {
+		return b.backend.Ready(ctx)
+	}
 	var out struct {
 		Ready bool `json:"ready"`
 	}
@@ -110,19 +130,28 @@ func (b *Broker) Authorize(ctx context.Context, bearer, tool string) (Binding, e
 	if len(bearer) < 16 || len(bearer) > 8192 || strings.ContainsAny(bearer, "\r\n\x00 ") {
 		return out, videos.FailureCode("authentication_required")
 	}
-	if err := b.request(ctx, "/v1/authorize", bearer, struct {
-		Audience string `json:"audience"`
-		Tool     string `json:"tool"`
-	}{"hhc-query", tool}, &out); err != nil {
-		return out, err
+	var err error
+	if b.backend != nil {
+		out, err = b.backend.Authorize(ctx, bearer, tool)
+		if err != nil {
+			return out, err
+		}
+	} else {
+		if err = b.request(ctx, "/v1/authorize", bearer, struct {
+			Audience string `json:"audience"`
+			Tool     string `json:"tool"`
+		}{"hhc-query", tool}, &out); err != nil {
+			return out, err
+		}
 	}
-	if out.CallerID == "" || len(out.CallerID) > 256 || out.BindingID == "" || len(out.BindingID) > 256 || out.HHC.Enabled && out.HHC.Access != "public" && out.HHC.Access != "human" || out.YouTube.Enabled && (out.YouTube.Access != "public" && out.YouTube.Access != "owner" || !youtube.ValidChannel(out.YouTube.ChannelID)) {
+	if out.CallerID == "" || len(out.CallerID) > 256 || out.BindingID == "" || len(out.BindingID) > 2048 || out.HHC.Enabled && out.HHC.Access != "public" && out.HHC.Access != "human" || out.YouTube.Enabled && (out.YouTube.Access != "public" && out.YouTube.Access != "owner" || !youtube.ValidChannel(out.YouTube.ChannelID)) {
 		return Binding{}, videos.FailureCode("permission_denied")
 	}
+	out.callerBearer = bearer
 	return out, nil
 }
 
-type credential struct {
+type Credential struct {
 	CallerID  string    `json:"callerId"`
 	BindingID string    `json:"bindingId"`
 	Source    string    `json:"source"`
@@ -133,8 +162,10 @@ type credential struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-func (credential) String() string     { return "[redacted credential]" }
-func (v credential) GoString() string { return v.String() }
+type credential = Credential
+
+func (Credential) String() string     { return "[redacted credential]" }
+func (v Credential) GoString() string { return v.String() }
 
 type credentialRequest struct {
 	CallerID  string `json:"callerId"`
@@ -145,7 +176,13 @@ type credentialRequest struct {
 
 func (b *Broker) token(ctx context.Context, binding Binding, source, resource string) (credential, error) {
 	var out credential
-	if err := b.request(ctx, "/v1/credential", "", credentialRequest{binding.CallerID, binding.BindingID, source, resource}, &out); err != nil {
+	if b.backend != nil {
+		var err error
+		out, err = b.backend.Credential(ctx, binding, binding.callerBearer, source, resource)
+		if err != nil {
+			return out, err
+		}
+	} else if err := b.request(ctx, "/v1/credential", binding.callerBearer, credentialRequest{binding.CallerID, binding.BindingID, source, resource}, &out); err != nil {
 		return out, err
 	}
 	if out.CallerID != binding.CallerID || out.BindingID != binding.BindingID || out.Source != source || out.Resource != resource || out.Token == "" || len(out.Token) > 8192 || strings.ContainsAny(out.Token, "\r\n\x00 ") || time.Until(out.ExpiresAt) < 40*time.Second {
@@ -155,6 +192,9 @@ func (b *Broker) token(ctx context.Context, binding Binding, source, resource st
 }
 func (b *Broker) permit(binding Binding, source, resource string) queryhttp.Permit {
 	return func(ctx context.Context, bucket string, cost int) error {
+		if b.backend != nil {
+			return b.backend.Permit(ctx, binding, binding.callerBearer, source, resource, bucket, cost)
+		}
 		var out struct {
 			Allowed bool `json:"allowed"`
 		}
@@ -163,7 +203,7 @@ func (b *Broker) permit(binding Binding, source, resource string) queryhttp.Perm
 			Bucket string `json:"bucket"`
 			Cost   int    `json:"cost"`
 		}{credentialRequest{binding.CallerID, binding.BindingID, source, resource}, bucket, cost}
-		if err := b.request(ctx, "/v1/permit", "", in, &out); err != nil {
+		if err := b.request(ctx, "/v1/permit", binding.callerBearer, in, &out); err != nil {
 			return err
 		}
 		if !out.Allowed {
@@ -180,7 +220,7 @@ func (b *Broker) Query(ctx context.Context, binding Binding, tool string, in vid
 	// Credential acquisition is lazy so one unavailable source cannot prevent
 	// successful results from the other source.
 	if binding.HHC.Enabled {
-		service.HHC = lazy{build: func() (videos.Provider, error) {
+		service.HHC = lazy{build: func(ctx context.Context) (videos.Provider, error) {
 			c := b.newUpstream(hhc.PublicOrigin)
 			grant := hhc.Grant{}
 			if binding.HHC.Access == "human" {
@@ -199,7 +239,7 @@ func (b *Broker) Query(ctx context.Context, binding Binding, tool string, in vid
 		}}
 	}
 	if binding.YouTube.Enabled {
-		service.YouTube = lazy{build: func() (videos.Provider, error) {
+		service.YouTube = lazy{build: func(ctx context.Context) (videos.Provider, error) {
 			v, err := b.token(ctx, binding, "youtube", binding.YouTube.ChannelID)
 			if err != nil {
 				return nil, err
@@ -223,6 +263,11 @@ func (b *Broker) Query(ctx context.Context, binding Binding, tool string, in vid
 	if err != nil {
 		return result, err
 	}
+	for _, source := range result.Sources {
+		if source.Error != nil && source.Error.CallerAuthority {
+			return videos.Result{}, source.Error
+		}
+	}
 	// Only recheck selected sources; unrelated disabled grants must not suppress a
 	// successful query. Any failed recheck clears that source's response.
 	for i := range result.Sources {
@@ -239,6 +284,9 @@ func (b *Broker) Query(ctx context.Context, binding Binding, tool string, in vid
 		}
 		if check != nil {
 			if err := check(ctx, "authorization", 0); err != nil {
+				if failure := videos.SafeFailure(err); failure.CallerAuthority {
+					return videos.Result{}, failure
+				}
 				r.Page = videos.Page{Items: []videos.Video{}}
 				r.Error = videos.SafeFailure(err)
 				result.Incomplete = true
@@ -252,18 +300,18 @@ func (b *Broker) Query(ctx context.Context, binding Binding, tool string, in vid
 }
 
 type lazy struct {
-	build func() (videos.Provider, error)
+	build func(context.Context) (videos.Provider, error)
 }
 
 func (l lazy) Search(ctx context.Context, in videos.Input) (videos.Page, error) {
-	p, e := l.build()
+	p, e := l.build(ctx)
 	if e != nil {
 		return videos.Page{}, e
 	}
 	return p.Search(ctx, in)
 }
 func (l lazy) Get(ctx context.Context, id string, in videos.Input) (videos.Page, error) {
-	p, e := l.build()
+	p, e := l.build(ctx)
 	if e != nil {
 		return videos.Page{}, e
 	}

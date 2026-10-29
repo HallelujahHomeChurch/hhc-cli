@@ -3,6 +3,7 @@ package hhc
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -104,7 +105,28 @@ func (p *Provider) Get(ctx context.Context, id string, in videos.Input) (videos.
 	if !videos.ValidHHCID(id) {
 		return videos.Page{}, videos.ErrInput
 	}
-	return p.scan(ctx, in, id)
+	if p.Grant.Bearer == "" {
+		return p.scan(ctx, in, id)
+	}
+	path, headers, err := p.route()
+	if err != nil {
+		return videos.Page{}, err
+	}
+	var response struct {
+		Data  *wireVideo      `json:"data"`
+		Error json.RawMessage `json:"error"`
+	}
+	if err = p.Client.Get(ctx, path+"/"+id, nil, headers, "hhc.read", 1, &response); err != nil {
+		return videos.Page{}, err
+	}
+	if response.Data == nil || response.Data.ID != id || response.Data.YouTubeID != "" && !videos.ValidYouTubeID(response.Data.YouTubeID) || len(response.Error) > 0 && string(response.Error) != "null" {
+		return videos.Page{}, videos.FailureCode("invalid_response")
+	}
+	value, err := convert(*response.Data, true, in.Locale)
+	if err != nil {
+		return videos.Page{}, err
+	}
+	return videos.Page{Items: []videos.Video{value}, Complete: true, Scanned: 1, Coverage: "human_content"}, nil
 }
 func (p *Provider) scan(ctx context.Context, in videos.Input, id string) (videos.Page, error) {
 	out := videos.Page{Items: []videos.Video{}, Coverage: "published_only"}

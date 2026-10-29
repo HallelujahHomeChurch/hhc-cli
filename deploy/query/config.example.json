@@ -1,0 +1,9 @@
+{
+  "resourceUrl": "https://query.example.invalid/mcp",
+  "issuer": "https://issuer.example.invalid",
+  "introspectionUrl": "https://issuer.example.invalid/oauth2/introspect",
+  "requiredScope": "video.query.read",
+  "clientId": "APPROVED_RESOURCE_CLIENT_ID",
+  "hosts": ["query.example.invalid", "hhc-query"],
+  "origins": []
+}

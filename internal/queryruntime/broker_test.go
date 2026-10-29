@@ -187,7 +187,7 @@ func TestPostReadRevocationDiscardsData(t *testing.T) {
 	auth.HHC.Enabled = true
 	auth.HHC.Access = "public"
 	result, err := b.Query(context.Background(), auth, "search_videos", videos.Input{Source: "hhc"})
-	if err != nil || !result.Incomplete || len(result.Sources[0].Items) != 0 || result.Sources[0].Error == nil {
+	if err == nil || !videos.SafeFailure(err).CallerAuthority || len(result.Sources) != 0 {
 		t.Fatalf("%+v %v", result, err)
 	}
 }
@@ -209,5 +209,77 @@ func TestNoPlaintextFallbackOrRelativeBroker(t *testing.T) {
 	}
 	if fmt.Sprintf("%#v", credential{Token: "SECRET"}) != "[redacted credential]" || strings.Contains(fmt.Sprintf("%#v", hhc.Grant{Bearer: "SECRET"}), "SECRET") {
 		t.Fatal("secret formatting")
+	}
+}
+
+type finalCheckBackend struct {
+	global     bool
+	hhcChecked atomic.Bool
+}
+
+func (f *finalCheckBackend) Ready(context.Context) error { return nil }
+func (f *finalCheckBackend) Authorize(context.Context, string, string) (Binding, error) {
+	b := Binding{CallerID: "fixture", BindingID: "binding"}
+	b.HHC.Enabled = true
+	b.HHC.Access = "human"
+	b.YouTube.Enabled = true
+	b.YouTube.Access = "owner"
+	b.YouTube.ChannelID = testChannel
+	return b, nil
+}
+func (f *finalCheckBackend) Credential(_ context.Context, b Binding, _ string, source, resource string) (Credential, error) {
+	kind, scope := "human", "cms:pages:read"
+	if source == "youtube" {
+		kind = "oauth"
+		scope = "https://www.googleapis.com/auth/youtube.readonly"
+	}
+	return Credential{CallerID: b.CallerID, BindingID: b.BindingID, Source: source, Resource: resource, Kind: kind, Scope: scope, Token: "fixture-token", ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+func (f *finalCheckBackend) Permit(_ context.Context, _ Binding, _ string, source, resource, bucket string, cost int) error {
+	if cost != 0 {
+		return nil
+	}
+	if source == "hhc" {
+		f.hhcChecked.Store(true)
+		return nil
+	}
+	if !f.hhcChecked.Load() {
+		return videos.FailureCode("invalid_test_order")
+	}
+	return &videos.Failure{Code: "authentication_required", CallerAuthority: f.global}
+}
+func TestGlobalRevocationAfterFirstFinalCheckClearsEverySource(t *testing.T) {
+	for _, global := range []bool{true, false} {
+		t.Run(fmt.Sprint(global), func(t *testing.T) {
+			backend := &finalCheckBackend{global: global}
+			b := NewEmbedded(backend)
+			b.newUpstream = func(base string) *queryhttp.Client {
+				c := queryhttp.New(base)
+				c.HTTP.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+					body := `{"data":[{"id":"fixture","youtubeVideoId":"abcdefghijk","isPublished":false,"translations":[{"locale":"zh-Hant","title":"HHC_PRIVATE_SENTINEL"}]}],"meta":{"page":1,"pageSize":100,"total":1}}`
+					if strings.HasSuffix(r.URL.Path, "/search") {
+						body = `{"items":[{"id":{"videoId":"abcdefghijk"}}]}`
+					} else if strings.HasSuffix(r.URL.Path, "/videos") && strings.Contains(r.URL.Host, "googleapis") {
+						body = `{"items":[{"id":"abcdefghijk","snippet":{"title":"YT_PRIVATE_SENTINEL","channelId":"` + testChannel + `"},"status":{"privacyStatus":"private"}}]}`
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: ioBody(body)}, nil
+				})
+				return c
+			}
+			binding, err := b.Authorize(context.Background(), "fixture-incoming-token", "search_videos")
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := b.Query(context.Background(), binding, "search_videos", videos.Input{})
+			if global {
+				if err == nil || !videos.SafeFailure(err).CallerAuthority || len(result.Sources) != 0 {
+					t.Fatal("global caller authority failure retained private source data")
+				}
+			} else {
+				if err != nil || !result.Incomplete || len(result.Sources[0].Items) != 1 || result.Sources[0].Items[0].Title != "HHC_PRIVATE_SENTINEL" || len(result.Sources[1].Items) != 0 {
+					t.Fatal("independent source failure lost valid source")
+				}
+			}
+		})
 	}
 }

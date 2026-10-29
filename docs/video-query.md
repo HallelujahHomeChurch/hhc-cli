@@ -55,7 +55,7 @@ website visibility. An authorized comparison checks the public projection first.
 Search/get of an admin draft can therefore return `publication=unknown`.
 
 HHC public `/api/videos` has no text query: matching title/summary is local within
-the page bound. Human admin uses only `/api/admin/content/videos` with approved
+the page bound. Human admin uses only `/api/admin/content/videos` and its exact ID detail route with approved
 `cms:pages:read` (optional `offline_access`); service grants are refused. Results
 omit creator/editor identifiers, raw assets, signed URLs and bodies. Public get
 scans the bounded catalog because there is no public video detail route.
@@ -67,7 +67,7 @@ private/unlisted details. Owner mode requires the separate exact
 no write scope is accepted. Search index exhaustion is not a complete channel
 inventory or proof of absence. Unavailable/deleted/private IDs can return no item.
 
-Each query is bounded to 30 seconds, 1–10 pages and 1–100 returned items per source
+Each query is bounded to 30 seconds with independent source deadlines up to 20 seconds, 1–10 pages and 1–100 returned items per source
 (default 3 pages/20 items). HHC pages contain at most 100 items, YouTube pages 50.
 GETs have an 8-second transport timeout. Only 429/502/503/504 receive one retry;
 Retry-After above 2 seconds is returned to the caller, not slept through. 401/403,
@@ -102,29 +102,30 @@ The [MCP transport contract](https://modelcontextprotocol.io/specification/2025-
 is the protocol reference. Unknown tools, arbitrary arguments, JSON batches,
 oversized input, unexpected hosts/origins and protocol versions are rejected.
 
-`hhc-query` requires an absolute `HHC_QUERY_BROKER_SOCKET` and explicit comma-separated
-`HHC_QUERY_HOSTS` (include host:port when present). Optional `HHC_QUERY_ORIGINS`
-contains exact permitted browser origins; by default every supplied Origin is
-rejected. TLS termination, OAuth discovery/consent and client registration belong
-to the approved ingress/identity integration. They are **not implemented by this
-process**, and a live ChatGPT connection is not established by building it.
+`hhc-query` loads non-secret deployment configuration through `HHC_QUERY_CONFIG`.
+It requires an explicit canonical HTTPS resource/issuer/introspection endpoint and
+Host/origin lists. It publishes protected-resource OAuth metadata and challenges;
+the authorization server owns registration, PKCE consent and resource-bound tokens.
+Without approved identity configuration and shared encrypted PostgreSQL state,
+real authentication/phone use remains blocked.
 
-The listener defaults to 127.0.0.1:8080. `--listen 0.0.0.0:8080` is intended only
-behind reviewed private networking/TLS ingress. The HTTP process does not inspect
-Mac profiles, read secret files, accept arbitrary environment tokens or refresh
-OAuth tokens. It asks a trusted broker per request. Without that broker it stays
-unready and fails closed. Deploying or implementing the target-specific broker,
-its identity verification and its durable refresh coordinator is a remaining
-prerequisite, not a completed production capability of this patch.
+The default backend is the concrete embedded `internal/querybroker`, composed in
+the same process. Runtime secrets arrive through a private inherited pipe selected
+by `HHC_QUERY_SECRET_FD`, or explicit platform secret injection in
+`HHC_QUERY_RUNTIME_SECRET`; neither is created here. There is no plaintext file,
+Mac keychain or native profile fallback. The optional `HHC_QUERY_BROKER_SOCKET`
+selects a reviewed external adapter instead; production preview uses the embedded
+backend. Both paths enforce request-scoped caller/source/resource binding.
 
-`GET /health/live` checks the running process; `GET /health/ready` additionally
-checks broker readiness. Neither reads private metadata or consumes YouTube quota.
-There are at most 8 active MCP requests per process and 64 KiB per input. Health
-readiness does not establish HHC/Google uptime or successful account/channel use.
-SIGTERM immediately disables readiness/new queries and drains for up to 35 seconds.
-Audit records only a caller hash, fixed operation/outcome and duration; never
-requests, tokens, titles, IDs, URLs or response bodies. Authentication failures
-have no caller hash and must be monitored by the identity ingress/broker.
+The listener defaults to 127.0.0.1:8080; the container listener is behind approved
+TLS ingress. Host/origin values come from trusted configuration, never forwarded
+headers or tool arguments. `GET /health/live` checks the process; readiness checks
+shared store/schema/key configuration, not issuer or HHC/Google availability.
+Route health internally and MCP/discovery through the intended ingress paths.
+There are at most 8 active MCP calls and 64 KiB per input. SIGTERM disables
+readiness/new calls and drains for up to 35 seconds before closing the embedded
+broker's DB pool, so an independent sidecar cannot disappear mid-query. Audit
+contains only caller hash, fixed operation/outcome and duration.
 
 See [the broker contract](video-query-broker.md) and
 [deployment/rollback runbook](../deploy/query/README.md). This source change does

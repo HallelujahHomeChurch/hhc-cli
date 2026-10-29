@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/mcp"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/querybroker"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/queryruntime"
 )
 
@@ -27,13 +27,42 @@ func run() int {
 	if fs.Parse(os.Args[1:]) != nil || fs.NArg() != 0 {
 		return 2
 	}
-	broker, err := queryruntime.NewBroker(os.Getenv("HHC_QUERY_BROKER_SOCKET"))
-	hosts := split(os.Getenv("HHC_QUERY_HOSTS"))
-	if err != nil || len(hosts) == 0 {
+	configPath := os.Getenv("HHC_QUERY_CONFIG")
+	if configPath == "" {
 		slog.Error("query configuration unavailable")
 		return 2
 	}
-	handler := mcp.NewServer(broker, hosts, split(os.Getenv("HHC_QUERY_ORIGINS")), version)
+	config, err := querybroker.LoadConfig(configPath)
+	if err != nil {
+		slog.Error("query configuration unavailable")
+		return 2
+	}
+	var broker *queryruntime.Broker
+	if socket := os.Getenv("HHC_QUERY_BROKER_SOCKET"); socket != "" {
+		broker, err = queryruntime.NewBroker(socket)
+	} else {
+		secrets, loadErr := querybroker.LoadRuntimeSecrets()
+		if loadErr != nil {
+			slog.Error("query secret injection unavailable")
+			return 2
+		}
+		backend, db, composeErr := querybroker.Compose(config, secrets)
+		if composeErr != nil {
+			slog.Error("query identity configuration unavailable")
+			return 2
+		}
+		defer db.Close()
+		broker = queryruntime.NewEmbedded(backend)
+	}
+	if err != nil {
+		slog.Error("query configuration unavailable")
+		return 2
+	}
+	handler, err := mcp.NewServerWithOAuth(broker, config.Hosts, config.Origins, version, mcp.OAuthConfig{ResourceURL: config.ResourceURL, AuthorizationServers: []string{config.Issuer}, ScopesSupported: []string{config.RequiredScope}})
+	if err != nil {
+		slog.Error("query OAuth configuration unavailable")
+		return 2
+	}
 	handler.Audit = func(a mcp.Audit) {
 		slog.Info("query", "callerHash", a.CallerHash, "operation", a.Operation, "outcome", a.Outcome, "durationMs", a.DurationMS)
 	}
@@ -60,13 +89,4 @@ func run() int {
 		}
 		return 0
 	}
-}
-func split(raw string) []string {
-	out := []string{}
-	for _, v := range strings.Split(raw, ",") {
-		if v = strings.TrimSpace(v); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
 }

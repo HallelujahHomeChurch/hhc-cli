@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -29,19 +30,85 @@ type Audit struct {
 	Outcome    string `json:"outcome"`
 	DurationMS int64  `json:"durationMs"`
 }
+
+// OAuthConfig is trusted deployment configuration. URLs and scopes are never
+// derived from Host, forwarded headers or tool arguments.
+type OAuthConfig struct {
+	ResourceURL          string
+	AuthorizationServers []string
+	ScopesSupported      []string
+}
+type protectedResourceMetadata struct {
+	Resource               string   `json:"resource"`
+	AuthorizationServers   []string `json:"authorization_servers"`
+	ScopesSupported        []string `json:"scopes_supported"`
+	BearerMethodsSupported []string `json:"bearer_methods_supported"`
+}
 type Server struct {
-	Identity Identity
-	Hosts    []string
-	Origins  []string
-	Version  string
-	Audit    func(Audit)
-	draining atomic.Bool
-	active   chan struct{}
+	Identity       Identity
+	Hosts          []string
+	Origins        []string
+	Version        string
+	Audit          func(Audit)
+	draining       atomic.Bool
+	active         chan struct{}
+	oauthMetadata  *protectedResourceMetadata
+	oauthChallenge string
 }
 
 func NewServer(identity Identity, hosts, origins []string, version string) *Server {
 	return &Server{Identity: identity, Hosts: hosts, Origins: origins, Version: version, active: make(chan struct{}, 8)}
 }
+
+// NewServerWithOAuth exposes protected-resource discovery for remote MCP OAuth.
+// The authorization server still owns client registration, consent and tokens.
+func NewServerWithOAuth(identity Identity, hosts, origins []string, version string, config OAuthConfig) (*Server, error) {
+	resource, err := safeOAuthURL(config.ResourceURL)
+	if err != nil || resource.Path != "/mcp" || !has(hosts, resource.Host) || len(config.AuthorizationServers) < 1 || len(config.AuthorizationServers) > 8 || len(config.ScopesSupported) < 1 || len(config.ScopesSupported) > 16 {
+		return nil, videos.ErrInput
+	}
+	for _, issuer := range config.AuthorizationServers {
+		if _, err := safeOAuthURL(issuer); err != nil {
+			return nil, videos.ErrInput
+		}
+	}
+	seen := map[string]bool{}
+	for _, scope := range config.ScopesSupported {
+		if scope == "" || len(scope) > 128 || seen[scope] {
+			return nil, videos.ErrInput
+		}
+		seen[scope] = true
+		for _, b := range []byte(scope) {
+			if b < 0x21 || b > 0x7e || b == '"' || b == '\\' {
+				return nil, videos.ErrInput
+			}
+		}
+	}
+	metadataURL := *resource
+	metadataURL.Path = "/.well-known/oauth-protected-resource/mcp"
+	s := NewServer(identity, hosts, origins, version)
+	s.oauthMetadata = &protectedResourceMetadata{Resource: resource.String(), AuthorizationServers: append([]string(nil), config.AuthorizationServers...), ScopesSupported: append([]string(nil), config.ScopesSupported...), BearerMethodsSupported: []string{"header"}}
+	s.oauthChallenge = `Bearer realm="hhc-query", resource_metadata="` + metadataURL.String() + `", scope="` + strings.Join(config.ScopesSupported, " ") + `"`
+	return s, nil
+}
+func safeOAuthURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || strings.ContainsAny(raw, "\r\n\x00") {
+		return nil, videos.ErrInput
+	}
+	return u, nil
+}
+func (s *Server) challenge(w http.ResponseWriter, code string) {
+	challenge := s.oauthChallenge
+	if challenge == "" {
+		challenge = `Bearer realm="hhc-query"`
+	}
+	if code != "" {
+		challenge += `, error="` + code + `"`
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
+}
+
 func (s *Server) Drain() { s.draining.Store(true) }
 func has(values []string, want string) bool {
 	for _, v := range values {
@@ -60,6 +127,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if origin := r.Header.Get("Origin"); len(r.Header.Values("Origin")) > 1 || origin != "" && !has(s.Origins, origin) {
 		w.WriteHeader(403)
+		return
+	}
+	if s.oauthMetadata != nil && (r.URL.Path == "/.well-known/oauth-protected-resource/mcp" || r.URL.Path == "/.well-known/oauth-protected-resource") {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			json.NewEncoder(w).Encode(s.oauthMetadata)
+		}
 		return
 	}
 	if r.URL.Path == "/health/live" && r.Method == http.MethodGet {
@@ -129,9 +208,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	start := time.Now()
-	bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || len(r.Header.Values("Authorization")) != 1 {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="hhc-query"`)
+	scheme, bearer, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") || bearer == "" || len(r.Header.Values("Authorization")) != 1 {
+		s.challenge(w, "")
 		w.WriteHeader(401)
 		return
 	}
@@ -141,10 +220,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		status := 503
 		if f.Code == "authentication_required" {
 			status = 401
-			w.Header().Set("WWW-Authenticate", `Bearer realm="hhc-query"`)
+			s.challenge(w, "invalid_token")
 		}
 		if f.Code == "permission_denied" {
 			status = 403
+		}
+		if f.Code == "insufficient_scope" {
+			status = 403
+			s.challenge(w, "insufficient_scope")
 		}
 		if f.Code == "rate_limited" {
 			status = 429
@@ -167,16 +250,36 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(202)
 		return
 	}
+	var callerFailure *videos.Failure
 	response := Handle(ctx, req, func(ctx context.Context, tool string, in videos.Input) (videos.Result, error) {
 		v, e := s.Identity.Query(ctx, binding, tool, in)
 		if e != nil {
-			outcome = videos.SafeFailure(e).Code
+			safe := videos.SafeFailure(e)
+			outcome = safe.Code
+			if safe.CallerAuthority {
+				callerFailure = safe
+			}
 		}
 		if v.Incomplete {
 			outcome = "incomplete"
 		}
 		return v, e
 	}, s.Version)
+	if callerFailure != nil {
+		status := 503
+		switch callerFailure.Code {
+		case "authentication_required":
+			status = 401
+			s.challenge(w, "invalid_token")
+		case "permission_denied":
+			status = 403
+		case "insufficient_scope":
+			status = 403
+			s.challenge(w, "insufficient_scope")
+		}
+		w.WriteHeader(status)
+		return
+	}
 	if response.Error != nil {
 		outcome = "protocol_error"
 	}

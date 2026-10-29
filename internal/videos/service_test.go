@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 type fixture struct {
@@ -50,5 +51,74 @@ func TestAmbiguousAdminSnapshotAndPrivateStatus(t *testing.T) {
 		if got := websiteStatus(h, "abcdefghijk"); got != tc.want {
 			t.Fatalf("%s got %s", tc.publication, got)
 		}
+	}
+}
+
+type waitingProvider struct{ started chan struct{} }
+
+func (p waitingProvider) Search(ctx context.Context, _ Input) (Page, error) {
+	if p.started != nil {
+		close(p.started)
+	}
+	<-ctx.Done()
+	return Page{}, ctx.Err()
+}
+func (p waitingProvider) Get(ctx context.Context, _ string, in Input) (Page, error) {
+	return p.Search(ctx, in)
+}
+func TestSourceTimeoutPreservesCompletedSource(t *testing.T) {
+	s := Service{HHC: fixture{page: Page{Items: []Video{{ID: "hhc:one", YouTubeVideoID: "abcdefghijk", Publication: "published"}}, Complete: true}}, YouTube: waitingProvider{}, SourceTimeout: 20 * time.Millisecond}
+	r, err := s.Execute(context.Background(), "compare_publication", Input{YouTubeVideoID: "abcdefghijk"})
+	if err != nil || len(r.Sources) != 2 || len(r.Sources[0].Items) != 1 || r.Sources[1].Error == nil || r.Sources[1].Error.Code != "timeout" || !r.Incomplete || r.WebsiteStatus != "published" {
+		t.Fatalf("successful source lost: %+v %v", r, err)
+	}
+}
+func TestCallerCancellationDuringSourceRead(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	type outcome struct {
+		result Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		r, err := (Service{HHC: waitingProvider{started: started}, SourceTimeout: time.Second}).Execute(ctx, "search_videos", Input{Source: "hhc"})
+		done <- outcome{r, err}
+	}()
+	<-started
+	cancel()
+	select {
+	case out := <-done:
+		if !errors.Is(out.err, context.Canceled) || len(out.result.Sources) != 0 {
+			t.Fatalf("caller cancellation hidden: %+v %v", out.result, out.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("caller cancellation did not stop query")
+	}
+}
+func TestCallerDeadlineIsNotASourceOnlyFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	r, err := (Service{HHC: waitingProvider{}, SourceTimeout: time.Second}).Execute(ctx, "search_videos", Input{Source: "hhc"})
+	if !errors.Is(err, context.DeadlineExceeded) || len(r.Sources) != 0 {
+		t.Fatalf("caller deadline hidden: %+v %v", r, err)
+	}
+}
+
+type expiredAuthorityProvider struct{}
+
+func (expiredAuthorityProvider) Search(ctx context.Context, _ Input) (Page, error) {
+	<-ctx.Done()
+	return Page{}, &Failure{Code: "authentication_required", CallerAuthority: true}
+}
+func (p expiredAuthorityProvider) Get(ctx context.Context, _ string, in Input) (Page, error) {
+	return p.Search(ctx, in)
+}
+func TestKnownCallerRevocationSurvivesSourceDeadline(t *testing.T) {
+	service := Service{HHC: expiredAuthorityProvider{}, SourceTimeout: time.Millisecond}
+	r, err := service.Execute(context.Background(), "search_videos", Input{Source: "hhc"})
+	if err != nil || len(r.Sources) != 1 || r.Sources[0].Error == nil || !r.Sources[0].Error.CallerAuthority {
+		t.Fatal("source timeout erased caller revocation")
 	}
 }
