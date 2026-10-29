@@ -145,7 +145,13 @@ shell literal, command argument or chat message.
 
 ```json
 ["hhc", "videos", "search", "--query", "聚會", "--source", "youtube", "--credentials-stdin", "--limit", "10", "--max-pages", "3", "--json", "--no-input"]
+```
+
+```json
 ["hhc", "videos", "get", "youtube:abcdefghijk", "--credentials-stdin", "--json", "--no-input"]
+```
+
+```json
 ["hhc", "videos", "compare", "abcdefghijk", "--credentials-stdin", "--json", "--no-input"]
 ```
 
@@ -186,10 +192,11 @@ Preview as literal argv:
 ```
 
 Apply the same reviewed intent once using the actual parsed ETag and planHash
-from that preview, as literal values in place of the example placeholders:
+from that preview, as literal values in place of the illustrative ETag and
+64-character zero hash below (never use the example hash for a real apply):
 
 ```json
-["hhc", "videos", "edit", "youtube:abcdefghijk", "--title", "新標題", "--apply", "--if-match", "ETAG_FROM_PREVIEW", "--plan-hash", "HASH_FROM_PREVIEW", "--credentials-stdin", "--json", "--no-input"]
+["hhc", "videos", "edit", "youtube:abcdefghijk", "--title", "新標題", "--apply", "--if-match", "ETAG_FROM_PREVIEW", "--plan-hash", "0000000000000000000000000000000000000000000000000000000000000000", "--credentials-stdin", "--json", "--no-input"]
 ```
 
 Other editable fields: `--description TEXT` and `--tags-json JSON_ARRAY`.
