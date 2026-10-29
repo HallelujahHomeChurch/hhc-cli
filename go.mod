@@ -1,6 +1,6 @@
 module github.com/HallelujahHomeChurch/hhc-cli
 
-go 1.26.1
+go 1.26.10
 
 require golang.org/x/sys v0.48.0
 
