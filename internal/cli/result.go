@@ -50,6 +50,15 @@ func classify(err error) (string, string, int, bool) {
 			message = "本機 HLS 產物驗證失敗，未確認完成。"
 		}
 	}
+	var queryFailure *videos.Failure
+	if errors.As(err, &queryFailure) {
+		switch queryFailure.Code {
+		case "authentication_required":
+			return "authentication_required", "需要執行器提供有效的唯讀授權。", 3, false
+		case "permission_denied":
+			return "permission_denied", "提供的授權不符合來源或唯讀權限。", 4, false
+		}
+	}
 	var remote *api.Error
 	if errors.As(err, &remote) {
 		if remote.Status > 0 {

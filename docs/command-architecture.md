@@ -46,11 +46,15 @@ commands for domains that do not exist yet.
 
 ## Video query domain
 
-`commands_videos.go` adapts public local queries and stdio MCP to `internal/videos`.
-The HTTP `cmd/hhc-query` process shares that service through `internal/mcp`, with
-source-specific providers and an embedded identity broker with shared PostgreSQL state (or an explicitly
-configured external adapter). It has no
-native credential/media/operation startup. Keep the existing native CLI entry and
-recording permissions separate. See [query boundaries](video-query.md) and the
-[broker contract](video-query-broker.md); HTTP hosting does not change native
-upload behavior or establish a production identity.
+`commands_videos.go` parses input and composes `internal/videos` with the HHC and
+YouTube providers. `internal/queryhttp` owns bounded read-only HTTP;
+`internal/videoauth` owns private-pipe credential validation and the reusable
+Google read-only refresh adapter. No query command initializes media, recording
+journals or the native recordings profile. Keep provider credentials scoped to
+one invocation and source. See [video queries](video-query.md) and the
+[HHC skill](../skills/hhc/SKILL.md).
+
+Queries run on demand using the ordinary `hhc` entrypoint. There is no query
+server, database or infrastructure deployment in this domain.
+An agent skill describes command use; the executing platform must separately
+provide authorized command execution and secure credentials.

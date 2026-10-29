@@ -1,132 +1,109 @@
 # Read-only video queries
 
-The same repository now contains a common Go query domain, thin CLI and MCP
-adapters, HHC/YouTube providers, and a separate media-free HTTP process. Existing
-recording, profile, upload, installation and update contracts are unchanged.
-Queries never initialize FFmpeg, open native credentials or sweep recordings.
+The `hhc videos` domain shares bounded Go query logic across thin CLI commands,
+separate HHC/YouTube providers and a read-only HTTP transport. It does not start
+a server, database, media tool or recording cleanup. Existing recording command
+paths, profiles, journals and JSON schema v1 remain compatible.
 
-```sh
-hhc videos search --source hhc --query "聚會" --json --no-input
-hhc videos get hhc:CONTENT_ID --json
-hhc videos get youtube:VIDEO_ID --json
-hhc videos compare VIDEO_ID --json
-hhc mcp serve --stdio
+## Commands and results
+
+```text
+hhc videos search --query 聚會 --source hhc --limit 10 --max-pages 3 --json --no-input
+hhc videos get youtube:abcdefghijk --credentials-stdin --json --no-input
+hhc videos compare abcdefghijk --credentials-stdin --json --no-input
 ```
 
-`VIDEO_ID` is an exact 11-character YouTube ID; `CONTENT_ID` comes from HHC.
-Sources keep separate `hhc:` and `youtube:` IDs. There are no title-derived joins.
-Local CLI/stdio access is public-only. YouTube requires an already authorized,
-API-restricted key injected through `HHC_YOUTUBE_API_KEY` and the explicit channel
-in `HHC_YOUTUBE_CHANNEL_ID`. Never put a key in argv, code, shell history or chat.
-This implementation does not create a key, OAuth grant, persistent credential,
-private profile, or connection. Private cloud grants use the broker below.
+The last two examples require an authorized private pipe as stdin; never put
+credentials in a command line, shell literal, chat message or file redirection.
+`--source` accepts `all`, `hhc`, `youtube`; each source returns at most 100 items
+and scans at most 10 pages. The default is 20 items/3 pages. `--timeout` is at
+most 30s, including credential input; each source has a 20s maximum.
 
-The three tools are `search_videos`, `get_video` and `compare_publication`.
-There are no generic URL, shell, content-edit, upload, publication, deletion,
-member-directory or analytics tools. Treat titles/descriptions as untrusted data.
+With `--json`, stdout is the existing schema-v1 envelope. `ok=true` means the
+query was evaluated; inspect `data.incomplete` and every source's `complete`,
+`coverage` and `error`. A source failure can preserve other source results.
+Missing credentials are not evidence that private content does not exist.
+Authentication errors require renewed authorization, not a public-only retry.
 
-## Result interpretation
+IDs are source-qualified (`hhc:ID`, `youtube:VIDEO_ID`). Comparison joins only
+exact `youtubeVideoId`, never title similarity. Every item includes provenance
+and observed time. `published` means a current public HHC observation;
+`not_published` requires an authorized human content observation.
+`not_observed` is a bounded observation, not proof of deletion/draft/absence;
+`unknown` covers failed/incomplete/ambiguous observations. Search is not a full
+channel inventory. Private YouTube search uses authorized `forMine=true`; the
+provider checks every result against the explicitly approved channel.
 
-Every source carries `items`, `complete`, `coverage`, `scanned` and an optional
-fixed-code `error`. `incomplete=true` means at least one source failed or reached
-a bound. CLI `ok=true` and MCP `isError=false` mean the query was evaluated;
-inspect all source errors even if **every** source failed. No partial result is
-proof that an upload or publication completed.
+## Private credentials
 
-`observedAt` records the request observation, not an upstream content-change time.
-Returned items carry source provenance and their own observation time. HHC public
-responses may have up to 30 seconds of upstream caching. Requests ask upstreams to
-revalidate; explicitly stale responses (`Age > 30` or Warning 110) are rejected.
-There is no application metadata, response, authorization or token cache, so an
-older private result is never substituted when permission or a source fails.
+`--credentials-stdin` consumes one strict JSON object, at most 16 KiB, from an
+actual private pipe owned by the invoking executor. Regular files, terminals,
+unknown/duplicate fields, null descriptors, expired credentials and trailing
+JSON are rejected. Omit an unused source descriptor. These are field names,
+not a credential file template to save:
 
-Comparison states describe the exact requested YouTube ID:
-
-| State | Evidence |
+| Object | Required fields |
 | --- | --- |
-| `published` | Exact ID observed in the public HHC projection |
-| `not_published` | Public scan exhausted without the ID and authorized human content reports an unpublished current item |
-| `not_observed` | No ID observed within an exhausted available projection; this does not establish draft/deletion/absence |
-| `unknown` | Source failed, scan bounded, ambiguous current draft/published snapshot, or authorization recheck failed |
+| `youtube` | `accessToken`, `scope`, `channelId`, `expiresAt` |
+| `hhc` | `accessToken`, `scope`, `principalType`, `expiresAt` |
 
-Admin `isPublished=true` may describe an older published snapshot while the
-current draft has another YouTube ID. That flag alone never establishes current
-website visibility. An authorized comparison checks the public projection first.
-Search/get of an admin draft can therefore return `publication=unknown`.
+`expiresAt` is RFC3339 and must be in the future within 24 hours. YouTube scope
+is exactly `https://www.googleapis.com/auth/youtube.readonly`; channelId must
+be the approved `UC...` channel. HHC requires `principalType=human` and
+`cms:pages:read` (optionally `offline_access`), not a recording-service token.
+The descriptor is a trusted executor assertion; Google/HHC remain authoritative
+for actual token validity, ownership, audience, permission and revocation.
+The CLI rechecks descriptor expiry before each upstream attempt. It does not
+verify human identity by trusting a user-supplied label or bypass server policy.
 
-HHC public `/api/videos` has no text query: matching title/summary is local within
-the page bound. Human admin uses only `/api/admin/content/videos` and its exact ID detail route with approved
-`cms:pages:read` (optional `offline_access`); service grants are refused. Results
-omit creator/editor identifiers, raw assets, signed URLs and bodies. Public get
-scans the bounded catalog because there is no public video detail route.
+Credentials are process-local, source-specific, never included in result JSON,
+logs or journals. Native recordings profiles and personal keychains are not
+opened. Private HHC requests use the existing supported human-only content
+route; website publication comparison still checks the public catalog first.
+No new Account scopes, routes, clients or infrastructure are provisioned.
 
-YouTube uses only `search.list` and `videos.list`, retrieves snippet/status/duration,
-and enforces the configured channel again on details. Public key access refuses
-private/unlisted details. Owner mode requires the separate exact
-`https://www.googleapis.com/auth/youtube.readonly` scope and `forMine=true` search;
-no write scope is accepted. Search index exhaustion is not a complete channel
-inventory or proof of absence. Unavailable/deleted/private IDs can return no item.
+For optional public YouTube queries, an approved executor may inject
+`HHC_YOUTUBE_CHANNEL_ID` and `HHC_YOUTUBE_API_KEY`; those variables do not grant
+private access. A private YouTube descriptor overrides that public configuration
+without falling back after OAuth denial.
 
-Each query is bounded to 30 seconds with independent source deadlines up to 20 seconds, 1–10 pages and 1–100 returned items per source
-(default 3 pages/20 items). HHC pages contain at most 100 items, YouTube pages 50.
-GETs have an 8-second transport timeout. Only 429/502/503/504 receive one retry;
-Retry-After above 2 seconds is returned to the caller, not slept through. 401/403,
-quota denial, invalid contracts and network ambiguity are not automatically
-retried. Every retry obtains another quota permit. Cancellation propagates to
-all source reads. A failed source's partial items are discarded.
+`internal/videoauth` also retains a reusable Google readonly refresh adapter.
+It exchanges only with Google's fixed HTTPS token endpoint, refuses redirects,
+never retries ambiguous refreshes, and returns any rotated credential to its
+owner. It is not invoked implicitly by `hhc videos`. An approved credential
+owner must serialize refresh, securely commit replacement tokens, fence an
+uncertain exchange, and obtain new consent when revoked. This repository does
+not add a persistent store, OAuth client registration or consent grant.
 
-Quota permits identify a bucket and units: `hhc.read:1`, `youtube.search:1`, or
-`youtube.default:1`. These are separate counters, not interchangeable units.
-The current [YouTube search contract](https://developers.google.com/youtube/data/reference/rest/v3/search/list)
-describes a dedicated Search Queries bucket; do not assume historical search
-costs or a project's actual quota. The deployment broker must enforce the actual
-project's counters, per-caller rate limits and concurrency limits across replicas.
-Local CLI has only per-query bounds; it is not a shared quota governor.
+## On-demand agent execution
 
-## Boundaries and runtime
+Use the repository [HHC skill](../skills/hhc/SKILL.md) and its query reference.
+The skill supplies instructions and argv examples; an existing authorized
+executor must separately run the CLI, inject short-lived credentials through
+a private child-process pipe, and protect private results. Do not build a
+shell command containing credentials. A private pipe transports credentials;
+it does not acquire or persist them.
 
-- `internal/videos`: normalized inputs/results, exact joins and partial failures.
-- `internal/videos/hhc`, `youtube`: provider contracts and safe metadata projections.
-- `internal/queryhttp`: bounded read-only transport, retries and stale rejection.
-- `internal/queryruntime`: request-scoped caller/grant binding and broker client.
-- `internal/mcp`: allowlisted tools and stateless JSON-RPC transports.
-- `internal/cli/commands_videos.go`: CLI and local stdio adapters.
-- `cmd/hhc-query`: cloud HTTP entry, probes, bounded admission and SIGTERM drain.
+A cloud executor can run independently of a personal Mac when it is actually
+available and callable from the current conversation. An ephemeral workspace,
+passing unit test or successful public request establishes neither durable
+credentials nor future availability. Confirm the selected runtime's supported
+credential owner/injection route before claiming private cloud access.
+Linux native recording credential storage still fails closed; never add a
+plaintext fallback. No new always-on compute is required by these CLI commands.
+Existing executor usage, API quota and platform charges depend on that platform.
 
-HTTP `/mcp` supports stateless MCP versions 2025-11-25 and 2025-06-18 with JSON
-POST responses. It has no session affinity, SSE streams, resumption or private
-session cache; GET/DELETE receive 405. Clients must send both JSON/SSE Accept
-media types. Notifications return 202. Transport disconnection cancels a request;
-stateless notification cancellation does not cancel another in-flight POST.
-The [MCP transport contract](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
-is the protocol reference. Unknown tools, arbitrary arguments, JSON batches,
-oversized input, unexpected hosts/origins and protocol versions are rejected.
+## Reliability and validation
 
-`hhc-query` loads non-secret deployment configuration through `HHC_QUERY_CONFIG`.
-It requires an explicit canonical HTTPS resource/issuer/introspection endpoint and
-Host/origin lists. It publishes protected-resource OAuth metadata and challenges;
-the authorization server owns registration, PKCE consent and resource-bound tokens.
-Without approved identity configuration and shared encrypted PostgreSQL state,
-real authentication/phone use remains blocked.
+The transport permits bounded GETs to composed provider origins, refuses
+redirects, limits bodies to 2 MiB and hides raw upstream errors/URLs. It retries
+429/502/503/504 at most once with a bounded Retry-After. It does not retry
+401/403, malformed responses or refresh exchanges. Explicit stale responses
+are rejected; there is no metadata/private-result cache. Cancellation reaches
+HTTP requests. Pagination, source failures and channel isolation use fixtures.
+Google's project quota remains authoritative; per-invocation bounds are not a
+global counter across executors. No background monitor or load test is started.
 
-The default backend is the concrete embedded `internal/querybroker`, composed in
-the same process. Runtime secrets arrive through a private inherited pipe selected
-by `HHC_QUERY_SECRET_FD`, or explicit platform secret injection in
-`HHC_QUERY_RUNTIME_SECRET`; neither is created here. There is no plaintext file,
-Mac keychain or native profile fallback. The optional `HHC_QUERY_BROKER_SOCKET`
-selects a reviewed external adapter instead; production preview uses the embedded
-backend. Both paths enforce request-scoped caller/source/resource binding.
-
-The listener defaults to 127.0.0.1:8080; the container listener is behind approved
-TLS ingress. Host/origin values come from trusted configuration, never forwarded
-headers or tool arguments. `GET /health/live` checks the process; readiness checks
-shared store/schema/key configuration, not issuer or HHC/Google availability.
-Route health internally and MCP/discovery through the intended ingress paths.
-There are at most 8 active MCP calls and 64 KiB per input. SIGTERM disables
-readiness/new calls and drains for up to 35 seconds before closing the embedded
-broker's DB pool, so an independent sidecar cannot disappear mid-query. Audit
-contains only caller hash, fixed operation/outcome and duration.
-
-See [the broker contract](video-query-broker.md) and
-[deployment/rollback runbook](../deploy/query/README.md). This source change does
-not activate a production service, release the CLI, or establish iPhone acceptance.
+Report source tests, CI, installed release, credential provisioning and real
+iPhone/Mac-offline private acceptance separately. Fixtures use synthetic
+credentials and do not establish live consent or deployed capability.

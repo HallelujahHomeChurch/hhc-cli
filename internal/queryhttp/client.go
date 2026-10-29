@@ -19,7 +19,7 @@ import (
 
 type Permit func(context.Context, string, int) error
 
-// Client is constructed by trusted runtime code; tools cannot choose destinations.
+// Client is composed by the CLI; query arguments cannot choose destinations.
 type Client struct {
 	HTTP   *http.Client
 	Base   string

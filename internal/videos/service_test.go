@@ -16,17 +16,17 @@ func (f fixture) Search(context.Context, Input) (Page, error)      { return f.pa
 func (f fixture) Get(context.Context, string, Input) (Page, error) { return f.page, f.err }
 func TestPartialFailureAndExactJoin(t *testing.T) {
 	s := Service{HHC: fixture{page: Page{Items: []Video{{ID: "hhc:one", YouTubeVideoID: "abcdefghijk", Publication: "published"}}, Complete: true}}, YouTube: fixture{err: errors.New("secret remote body")}}
-	r, err := s.Execute(context.Background(), "compare_publication", Input{YouTubeVideoID: "abcdefghijk"})
+	r, err := s.Execute(context.Background(), "compare", Input{YouTubeVideoID: "abcdefghijk"})
 	if err != nil || !r.Incomplete || r.WebsiteStatus != "published" || len(r.Sources) != 2 || r.Sources[1].Error.Code != "unavailable" {
 		t.Fatalf("unexpected result: %+v %v", r, err)
 	}
 	s.HHC = fixture{page: Page{Items: []Video{{ID: "hhc:one", YouTubeVideoID: "different11", Publication: "published"}}, Complete: true}}
-	r, _ = s.Execute(context.Background(), "compare_publication", Input{YouTubeVideoID: "abcdefghijk"})
+	r, _ = s.Execute(context.Background(), "compare", Input{YouTubeVideoID: "abcdefghijk"})
 	if r.WebsiteStatus != "not_observed" {
 		t.Fatal(r.WebsiteStatus)
 	}
 	s.HHC = fixture{page: Page{Complete: false}}
-	r, _ = s.Execute(context.Background(), "compare_publication", Input{YouTubeVideoID: "abcdefghijk"})
+	r, _ = s.Execute(context.Background(), "compare", Input{YouTubeVideoID: "abcdefghijk"})
 	if r.WebsiteStatus != "unknown" {
 		t.Fatal(r.WebsiteStatus)
 	}
@@ -34,13 +34,13 @@ func TestPartialFailureAndExactJoin(t *testing.T) {
 func TestInputAndCancellation(t *testing.T) {
 	s := Service{}
 	for _, in := range []Input{{Source: "arbitrary"}, {Limit: 101}, {MaxPages: 11}, {ID: "https://bad"}} {
-		if _, err := s.Execute(context.Background(), "get_video", in); !errors.Is(err, ErrInput) {
+		if _, err := s.Execute(context.Background(), "get", in); !errors.Is(err, ErrInput) {
 			t.Fatal(err)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := s.Execute(ctx, "search_videos", Input{}); !errors.Is(err, context.Canceled) {
+	if _, err := s.Execute(ctx, "search", Input{}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 }
@@ -68,7 +68,7 @@ func (p waitingProvider) Get(ctx context.Context, _ string, in Input) (Page, err
 }
 func TestSourceTimeoutPreservesCompletedSource(t *testing.T) {
 	s := Service{HHC: fixture{page: Page{Items: []Video{{ID: "hhc:one", YouTubeVideoID: "abcdefghijk", Publication: "published"}}, Complete: true}}, YouTube: waitingProvider{}, SourceTimeout: 20 * time.Millisecond}
-	r, err := s.Execute(context.Background(), "compare_publication", Input{YouTubeVideoID: "abcdefghijk"})
+	r, err := s.Execute(context.Background(), "compare", Input{YouTubeVideoID: "abcdefghijk"})
 	if err != nil || len(r.Sources) != 2 || len(r.Sources[0].Items) != 1 || r.Sources[1].Error == nil || r.Sources[1].Error.Code != "timeout" || !r.Incomplete || r.WebsiteStatus != "published" {
 		t.Fatalf("successful source lost: %+v %v", r, err)
 	}
@@ -83,7 +83,7 @@ func TestCallerCancellationDuringSourceRead(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		r, err := (Service{HHC: waitingProvider{started: started}, SourceTimeout: time.Second}).Execute(ctx, "search_videos", Input{Source: "hhc"})
+		r, err := (Service{HHC: waitingProvider{started: started}, SourceTimeout: time.Second}).Execute(ctx, "search", Input{Source: "hhc"})
 		done <- outcome{r, err}
 	}()
 	<-started
@@ -100,7 +100,7 @@ func TestCallerCancellationDuringSourceRead(t *testing.T) {
 func TestCallerDeadlineIsNotASourceOnlyFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	r, err := (Service{HHC: waitingProvider{}, SourceTimeout: time.Second}).Execute(ctx, "search_videos", Input{Source: "hhc"})
+	r, err := (Service{HHC: waitingProvider{}, SourceTimeout: time.Second}).Execute(ctx, "search", Input{Source: "hhc"})
 	if !errors.Is(err, context.DeadlineExceeded) || len(r.Sources) != 0 {
 		t.Fatalf("caller deadline hidden: %+v %v", r, err)
 	}
@@ -117,7 +117,7 @@ func (p expiredAuthorityProvider) Get(ctx context.Context, _ string, in Input) (
 }
 func TestKnownCallerRevocationSurvivesSourceDeadline(t *testing.T) {
 	service := Service{HHC: expiredAuthorityProvider{}, SourceTimeout: time.Millisecond}
-	r, err := service.Execute(context.Background(), "search_videos", Input{Source: "hhc"})
+	r, err := service.Execute(context.Background(), "search", Input{Source: "hhc"})
 	if err != nil || len(r.Sources) != 1 || r.Sources[0].Error == nil || !r.Sources[0].Error.CallerAuthority {
 		t.Fatal("source timeout erased caller revocation")
 	}

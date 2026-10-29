@@ -93,9 +93,9 @@ var commandHelp = map[string]string{
   get      依來源 ID 讀取資料
   compare  依 YouTube ID 比對網站公開狀態
 
-公開 HHC 不需登入；YouTube 需注入限定的 API key 和頻道 ID。
+公開 HHC 不需登入；私有 YouTube／HHC 使用已授權執行器的私有憑證 pipe。
 結果的 incomplete、complete、coverage 與 error 必須一併判讀。`,
-	"videos search": `搜尋影片（公開資料）
+	"videos search": `搜尋影片
 
 範例：hhc videos search --query "聚會" --source hhc --json
   --query TEXT         標題／摘要關鍵字
@@ -104,15 +104,16 @@ var commandHelp = map[string]string{
   --max-pages NUMBER   每個來源最多分頁，1–10，預設 3
   --locale LOCALE      zh-Hant、zh-Hans、en
   --timeout DURATION   最多 30s，預設 30s
+  --credentials-stdin  從私有 pipe 讀取短效唯讀 OAuth grant；拒絕一般檔案
 
 HHC 公開清單在分頁上限內本機過濾。部分來源失敗以 incomplete=true 回報。`,
-	"videos get": `讀取影片（公開資料）
+	"videos get": `讀取影片
 
 範例：hhc videos get youtube:abcdefghijk --json
   ID                   hhc:ID 或 youtube:VIDEO_ID
   --limit／--max-pages／--locale／--timeout 同 search
 
-讀取 HHC ID 也受分頁上限限制。`,
+公開 HHC ID 受分頁上限限制；已授權 human grant 可直接讀取。`,
 	"videos compare": `比對網站公開狀態
 
 範例：hhc videos compare abcdefghijk --json
@@ -120,16 +121,6 @@ HHC 公開清單在分頁上限內本機過濾。部分來源失敗以 incomplet
   --limit／--max-pages／--locale／--timeout 同 search
 
 僅用精確 youtubeVideoId；not_observed 不代表草稿、刪除或不存在。`,
-	"mcp": `唯讀影片工具
-
-  serve --stdio        在本機程序提供公開資料 MCP
-
-雲端 HTTP 服務使用獨立 hhc-query 執行檔；見 docs/video-query.md。`,
-	"mcp serve": `提供本機 MCP
-
-範例：hhc mcp serve --stdio
-
-標準輸出僅包含 MCP JSON-RPC。雲端授權由 hhc-query 的外部 broker 提供。`,
 
 	"auth": `帳號操作
 

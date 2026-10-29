@@ -98,3 +98,30 @@ func TestMalformedAndRepeatedPages(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnerSearchUsesReadOnlyOAuthAndPrivateDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fixture-owner" || r.Header.Get("X-Goog-Api-Key") != "" {
+			t.Error("owner bearer missing or mixed")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/youtube/v3/search":
+			if r.URL.Query().Get("forMine") != "true" || r.URL.Query().Get("channelId") != fixtureChannel || r.URL.Query().Get("q") != "聚會" {
+				t.Error("owner search constraints missing")
+			}
+			fmt.Fprint(w, `{"items":[{"id":{"videoId":"abcdefghijk"}}]}`)
+		case "/youtube/v3/videos":
+			fmt.Fprintf(w, `{"items":[{"id":"abcdefghijk","snippet":{"title":"Private","channelId":%q},"status":{"privacyStatus":"private"}}]}`, fixtureChannel)
+		default:
+			t.Error("unexpected endpoint")
+		}
+	}))
+	defer server.Close()
+	provider := Provider{Client: queryhttp.New(server.URL), Grant: Grant{Bearer: "fixture-owner", Scope: ReadScope, ChannelID: fixtureChannel}}
+	input, _ := (videos.Input{Query: "聚會"}).Normalize()
+	result, err := provider.Search(context.Background(), input)
+	if err != nil || !result.Complete || result.Coverage != "channel_search_index" || len(result.Items) != 1 || result.Items[0].Privacy != "private" {
+		t.Fatalf("%+v %v", result, err)
+	}
+}

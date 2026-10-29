@@ -1,4 +1,4 @@
-// Package videos owns read-only query contracts shared by CLI and MCP adapters.
+// Package videos owns read-only video query contracts.
 package videos
 
 import (
@@ -87,7 +87,7 @@ func SafeFailure(err error) *Failure {
 	return &Failure{Code: "unavailable", Retryable: true}
 }
 func FailureCode(code string) error {
-	return &Failure{Code: code, Retryable: code == "unavailable" || code == "broker_unavailable" || code == "timeout" || code == "rate_limited"}
+	return &Failure{Code: code, Retryable: code == "unavailable" || code == "timeout" || code == "rate_limited"}
 }
 
 type SourceResult struct {
@@ -106,12 +106,11 @@ type Provider interface {
 	Get(context.Context, string, Input) (Page, error)
 }
 
-// Service shares bounded provider queries between the CLI and MCP adapters.
+// Service composes bounded source queries independently of CLI parsing.
 type Service struct {
 	HHC, YouTube Provider
 	// SourceTimeout is a trusted composition setting, never a tool argument. Its
-	// default/max 20 seconds leaves time in the outer 30-second HTTP budget for
-	// authorization and final revocation checks.
+	// default/max 20 seconds fits within the outer 30-second command budget.
 	SourceTimeout time.Duration
 }
 
@@ -135,17 +134,17 @@ func (s Service) Execute(ctx context.Context, tool string, in Input) (Result, er
 		return out, err
 	}
 	switch tool {
-	case "search_videos":
+	case "search":
 		if in.ID != "" || in.YouTubeVideoID != "" {
 			return out, ErrInput
 		}
-	case "get_video":
+	case "get":
 		source, id, ok := strings.Cut(in.ID, ":")
 		if !ok || !slices.Contains([]string{"hhc", "youtube"}, source) || in.Source != "" && in.Source != source || in.Query != "" || in.YouTubeVideoID != "" || source == "hhc" && !ValidHHCID(id) || source == "youtube" && !ValidYouTubeID(id) {
 			return out, ErrInput
 		}
 		in.Source = source
-	case "compare_publication":
+	case "compare":
 		if !ValidYouTubeID(in.YouTubeVideoID) || in.Query != "" || in.ID != "" || in.Source != "" && in.Source != "all" {
 			return out, ErrInput
 		}
@@ -175,10 +174,10 @@ func (s Service) Execute(ctx context.Context, tool string, in Input) (Result, er
 			var err error
 			if n.p == nil {
 				err = FailureCode("not_configured")
-			} else if tool == "get_video" {
+			} else if tool == "get" {
 				_, id, _ := strings.Cut(in.ID, ":")
 				r.Page, err = n.p.Get(sourceContext, id, in)
-			} else if tool == "compare_publication" && n.name == "youtube" {
+			} else if tool == "compare" && n.name == "youtube" {
 				r.Page, err = n.p.Get(sourceContext, in.YouTubeVideoID, in)
 			} else {
 				r.Page, err = n.p.Search(sourceContext, in)
@@ -204,7 +203,7 @@ func (s Service) Execute(ctx context.Context, tool string, in Input) (Result, er
 	for _, r := range out.Sources {
 		out.Incomplete = out.Incomplete || !r.Complete || r.Error != nil
 	}
-	if tool == "compare_publication" {
+	if tool == "compare" {
 		out.WebsiteStatus = websiteStatus(out.Sources[0], in.YouTubeVideoID)
 	}
 	return out, nil
