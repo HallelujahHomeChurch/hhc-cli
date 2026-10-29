@@ -164,3 +164,10 @@ func TestHTTPAdmissionLimit(t *testing.T) {
 		t.Fatal("admission not bounded")
 	}
 }
+
+func TestCancellationNotificationPolicyOperation(t *testing.T) {
+	r, err := Decode([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}`))
+	if err != nil || Operation(r) != "notifications/cancelled" {
+		t.Fatalf("%s %v", Operation(r), err)
+	}
+}

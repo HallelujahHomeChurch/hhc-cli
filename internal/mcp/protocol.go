@@ -56,7 +56,7 @@ func Operation(r Request) string {
 	switch r.Method {
 	case "initialize", "ping", "tools/list":
 		return r.Method
-	case "notifications/initialized":
+	case "notifications/initialized", "notifications/cancelled":
 		return r.Method
 	case "tools/call":
 		var p struct {
