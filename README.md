@@ -1,8 +1,10 @@
 # HHC CLI
 
 The command-line interface for Hallelujah Home Church software (家教會軟體 CLI).
-Current command groups cover account access, recording workflows, installation
-and updates. Existing recording commands and JSON contracts remain compatible.
+Current command groups cover account access, recording workflows, read-only
+video queries, MCP, installation and updates. See [video query documentation](docs/video-query.md)
+for the shared query domain and the separate cloud HTTP deployment preview.
+Existing recording commands and JSON contracts remain compatible.
 See [command architecture](docs/command-architecture.md) to add another domain.
 
 Local HLS validation runs up to three rendition probes concurrently after

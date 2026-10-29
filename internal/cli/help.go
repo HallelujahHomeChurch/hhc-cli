@@ -79,7 +79,7 @@ func helpRequested(args []string) bool {
 		name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		// These existing flags consume their next argv element even if it starts
 		// with '-'. Match flag.FlagSet semantics; titles/scopes remain literal data.
-		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "cover", "operation-id", "output", "timeout", "directory"}, name) {
+		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "cover", "operation-id", "output", "timeout", "directory", "query", "source", "limit", "max-pages", "locale"}, name) {
 			i++
 		}
 	}
@@ -87,6 +87,50 @@ func helpRequested(args []string) bool {
 }
 
 var commandHelp = map[string]string{
+	"videos": `唯讀影片查詢
+
+  search   搜尋 HHC／YouTube 影片
+  get      依來源 ID 讀取資料
+  compare  依 YouTube ID 比對網站公開狀態
+
+公開 HHC 不需登入；YouTube 需注入限定的 API key 和頻道 ID。
+結果的 incomplete、complete、coverage 與 error 必須一併判讀。`,
+	"videos search": `搜尋影片（公開資料）
+
+範例：hhc videos search --query "聚會" --source hhc --json
+  --query TEXT         標題／摘要關鍵字
+  --source SOURCE      all、hhc 或 youtube
+  --limit NUMBER       每個來源最多回傳筆數，1–100，預設 20
+  --max-pages NUMBER   每個來源最多分頁，1–10，預設 3
+  --locale LOCALE      zh-Hant、zh-Hans、en
+  --timeout DURATION   最多 30s，預設 30s
+
+HHC 公開清單在分頁上限內本機過濾。部分來源失敗以 incomplete=true 回報。`,
+	"videos get": `讀取影片（公開資料）
+
+範例：hhc videos get youtube:abcdefghijk --json
+  ID                   hhc:ID 或 youtube:VIDEO_ID
+  --limit／--max-pages／--locale／--timeout 同 search
+
+讀取 HHC ID 也受分頁上限限制。`,
+	"videos compare": `比對網站公開狀態
+
+範例：hhc videos compare abcdefghijk --json
+  VIDEO_ID             11 字元 YouTube ID
+  --limit／--max-pages／--locale／--timeout 同 search
+
+僅用精確 youtubeVideoId；not_observed 不代表草稿、刪除或不存在。`,
+	"mcp": `唯讀影片工具
+
+  serve --stdio        在本機程序提供公開資料 MCP
+
+雲端 HTTP 服務使用獨立 hhc-query 執行檔；見 docs/video-query.md。`,
+	"mcp serve": `提供本機 MCP
+
+範例：hhc mcp serve --stdio
+
+標準輸出僅包含 MCP JSON-RPC。雲端授權由 hhc-query 的外部 broker 提供。`,
+
 	"auth": `帳號操作
 
   login   登入（一般帳號開啟瀏覽器）

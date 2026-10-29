@@ -1,0 +1,97 @@
+# REVIEW PREVIEW ONLY. Render reviewed digest/host/namespace/broker settings before
+# validation. No provider, cluster, credential, OAuth grant or paid resource is
+# selected or provisioned by this template. Broker implementation is a prerequisite.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hhc-query
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 2
+  minReadySeconds: 10
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels: {app: hhc-query}
+  template:
+    metadata:
+      labels: {app: hhc-query}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels: {app: hhc-query}
+      containers:
+        - name: query
+          image: ${QUERY_IMAGE_DIGEST}
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: HHC_QUERY_HOSTS, value: '${QUERY_HOST},hhc-query'}
+            - {name: HHC_QUERY_BROKER_SOCKET, value: /run/broker/identity.sock}
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: '1', memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: broker-socket, mountPath: /run/broker, readOnly: true}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+              httpHeaders: [{name: Host, value: hhc-query}]
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+              httpHeaders: [{name: Host, value: hhc-query}]
+            timeoutSeconds: 3
+        # A reviewed broker adapter, using the target's managed identity/secret
+        # store and shared token-refresh fencing/quota coordination. No secret
+        # environment values or volumes are specified here.
+        - name: identity-broker
+          image: ${BROKER_IMAGE_DIGEST}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: broker-socket, mountPath: /run/broker}
+      volumes:
+        - name: broker-socket
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hhc-query
+  namespace: ${NAMESPACE}
+spec:
+  selector: {app: hhc-query}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: hhc-query
+  namespace: ${NAMESPACE}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: hhc-query}

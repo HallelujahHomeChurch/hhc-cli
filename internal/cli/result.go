@@ -13,6 +13,7 @@ import (
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/operation"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/recordings"
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/update"
+	"github.com/HallelujahHomeChurch/hhc-cli/internal/videos"
 )
 
 type result struct {
@@ -134,7 +135,7 @@ func classifyCause(err error) (string, string, int, bool) {
 		return "cancelled", "操作已取消。", 130, false
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout", "操作逾時，尚未確認完成。", 6, true
-	case errors.Is(err, auth.ErrInvalidAuthInput):
+	case errors.Is(err, videos.ErrInput), errors.Is(err, auth.ErrInvalidAuthInput):
 		return "invalid_input", "參數無效；請使用 hhc --help。", 2, false
 	case errors.Is(err, media.ErrInvalidInput), errors.Is(err, recordings.ErrInvalidJournal):
 		return "invalid_input", "套件或操作紀錄無效，未確認完成。", 2, false
