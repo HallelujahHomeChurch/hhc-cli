@@ -47,9 +47,11 @@ commands for domains that do not exist yet.
 ## Video query domain
 
 `commands_videos.go` parses input and composes `internal/videos` with the HHC and
-YouTube providers. `internal/queryhttp` owns bounded read-only HTTP;
+YouTube providers. `commands_video_edit.go` handles explicit metadata edits;
+`internal/videos/youtube` owns snippet preservation, ETag preconditions and
+read-back verification. `internal/queryhttp` owns bounded read-only HTTP;
 `internal/videoauth` owns private-pipe credential validation and the reusable
-Google read-only refresh adapter. No query command initializes media, recording
+Google OAuth lifecycle adapters. No query command initializes media, recording
 journals or the native recordings profile. Keep provider credentials scoped to
 one invocation and source. See [video queries](video-query.md) and the
 [HHC skill](../skills/hhc/SKILL.md).

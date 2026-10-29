@@ -1,14 +1,16 @@
 ---
 name: hhc
-description: Use the HHC CLI to search HHC and YouTube videos, inspect private videos with approved read-only credentials, compare website publication status, or prepare, upload, resume and publish church recordings.
+description: Use the HHC CLI to search HHC and YouTube videos, inspect private videos with approved read-only credentials, compare website publication status, edit explicitly selected YouTube titles/descriptions/tags, or prepare, upload, resume and publish church recordings.
 ---
 
 # HHC CLI
 
 Use the installed, trusted `hhc` distribution. Keep queries separate from
-recording changes. Read [video queries](references/video-queries.md) for video
+recording changes. Read [video queries](references/commands.md#video-queries) for video
 search/details/publication requests, including private YouTube access. Read
 [recording commands](references/commands.md) only for recording operations.
+Read [metadata edits](references/commands.md#youtube-metadata-edits) before any YouTube write and
+[Google OAuth](references/commands.md#google-oauth-and-cloud-execution) for consent/runtime prerequisites.
 
 ## Read-only video requests
 
@@ -19,7 +21,8 @@ search/details/publication requests, including private YouTube access. Read
    This skill supplies neither execution tools nor credentials or availability.
 2. Check `hhc version --json` and `hhc videos -h`. For private requests, require
    the executor's approved credential owner to inject short-lived source-specific
-   OAuth access tokens via a private child-process stdin pipe. Use
+   OAuth access tokens via a private child-process stdin pipe. Readonly or an
+   explicitly consented edit scope can authorize reads; never broaden it silently. Use
    `--credentials-stdin --json --no-input`. Do not inspect credential files or
    keychains, start consent, create grants, or put secrets in argv/chat/logs.
    If credentials/injection are absent, report that exact dependency and stop
@@ -36,6 +39,30 @@ search/details/publication requests, including private YouTube access. Read
 5. On 401/403 or expired/revoked credentials, stop for the credential owner;
    do not change accounts, broaden scopes, retry refresh or use public fallback.
    Keep private result data out of public issues, artifacts and routine logs.
+
+## YouTube metadata edits
+
+1. Require explicit intent to change a particular video's title, description
+   and/or tags. Resolve the exact `youtube:VIDEO_ID`, approved channel and exact
+   field values. Google consent permits access; it does not itself request an edit.
+   Upload/delete/privacy/publish changes are outside this metadata workflow.
+2. Require the approved runtime's explicitly consented `youtube.force-ssl` grant.
+   Explain that Google's scope authorizes more than this CLI exposes. Missing
+   consent/callback/secure grant owner is a stop, not permission to paste tokens,
+   inspect stores, start infrastructure or use a different grant.
+3. Run `videos edit` with the selected fields, `--dry-run --credentials-stdin
+   --json --no-input`. Inspect exact ID/channel, changed fields, ETag and planHash.
+   Apply only changes covered by the user's request; clarify ambiguous or added
+   changes. Existing explicit authorization for the exact changes needs no
+   repeated confirmation.
+4. Execute once with the same ID/fields, `--apply --if-match ETAG --plan-hash HASH`
+   and private credential pipe. Never alter preconditions to force a conflict.
+   Require exit 0, `ok=true`, `requestedActionSatisfied=true` and outcome
+   `verified` or `unchanged` before reporting the desired metadata confirmed.
+5. For `mutation_uncertain` or `verification_failed`, do not resend the PUT.
+   Reconcile using the same intent in a new `--dry-run` (no `--apply`) and report
+   the current differences/state. A fresh plan is not permission to retry an
+   uncertain write. Keep previews and private metadata out of public artifacts.
 
 ## Recording operations
 

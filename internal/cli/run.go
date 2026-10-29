@@ -27,6 +27,7 @@ type commandContext struct {
 	result              result
 	progress            *progressDisplay
 	videoQuery          videoQuery
+	videoEdit           videoEdit
 }
 
 type commandGroup struct {
@@ -37,7 +38,7 @@ type commandGroup struct {
 
 var commandGroups = []commandGroup{
 	{"auth", "帳號登入與身分管理", true, runAuth},
-	{"videos", "唯讀影片搜尋與發布狀態比對", true, runVideos},
+	{"videos", "影片查詢、狀態比對與限定中繼資料編輯", true, runVideos},
 	{"recordings", "錄影準備、上傳與發布", true, runRecordings},
 	{"install", "建立受管理安裝", false, runInstall},
 	{"update", "更新工具", false, runUpdate},

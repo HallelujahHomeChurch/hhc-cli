@@ -24,12 +24,13 @@ type GoogleCredential struct {
 	AccessToken  string
 	Scope        string
 	ExpiresAt    time.Time
+	ChannelID    string
 }
 
 func (GoogleCredential) String() string     { return "[redacted Google credential]" }
 func (v GoogleCredential) GoString() string { return v.String() }
 
-// GoogleRefresh exchanges one already-authorized youtube.readonly refresh token.
+// GoogleRefresh exchanges one already-authorized exact read or edit refresh token.
 // It does not create consent, coordinate concurrent processes or persist tokens.
 // Before calling, an approved credential owner must durably fence and serialize
 // the exchange; before using its result it must securely commit rotated tokens.
@@ -51,10 +52,10 @@ func (r *GoogleRefresh) Refresh(ctx context.Context, current GoogleCredential) (
 	if err := ctx.Err(); err != nil {
 		return GoogleCredential{}, err
 	}
-	if current.Scope != youtube.ReadScope || !safeToken(current.ClientID) || !safeToken(current.RefreshToken) || current.ClientSecret != "" && !safeToken(current.ClientSecret) {
+	if !validGoogleScope(current.Scope) || !safeToken(current.ClientID) || !safeToken(current.RefreshToken) || current.ClientSecret != "" && !safeToken(current.ClientSecret) {
 		return GoogleCredential{}, videos.FailureCode("permission_denied")
 	}
-	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {current.RefreshToken}, "client_id": {current.ClientID}, "scope": {youtube.ReadScope}}
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {current.RefreshToken}, "client_id": {current.ClientID}, "scope": {current.Scope}}
 	if current.ClientSecret != "" {
 		form.Set("client_secret", current.ClientSecret)
 	}
@@ -75,14 +76,24 @@ func (r *GoogleRefresh) Refresh(ctx context.Context, current GoogleCredential) (
 		}
 		return GoogleCredential{}, videos.FailureCode("refresh_uncertain")
 	}
+	return googleTokenResponse(resp, current, "refresh_uncertain", false)
+}
+
+func validGoogleScope(scope string) bool {
+	return scope == youtube.ReadScope || scope == "https://www.googleapis.com/auth/youtube.force-ssl"
+}
+
+// Parse only Google's bounded token response; scope omission means the exact
+// requested scope remains unchanged, never an inferred permission increase.
+func googleTokenResponse(resp *http.Response, current GoogleCredential, uncertain string, requireRefresh bool) (GoogleCredential, error) {
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		return GoogleCredential{}, videos.FailureCode("refresh_uncertain")
+		return GoogleCredential{}, videos.FailureCode(uncertain)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16385))
 	defer clear(raw)
 	if err != nil || len(raw) > 16384 || !utf8.Valid(raw) || uniqueJSON(raw) != nil {
-		return GoogleCredential{}, videos.FailureCode("refresh_uncertain")
+		return GoogleCredential{}, videos.FailureCode(uncertain)
 	}
 	var v struct {
 		Access  string `json:"access_token"`
@@ -91,12 +102,12 @@ func (r *GoogleRefresh) Refresh(ctx context.Context, current GoogleCredential) (
 		Expires int64  `json:"expires_in"`
 		Type    string `json:"token_type"`
 	}
-	if json.Unmarshal(raw, &v) != nil || !strings.EqualFold(v.Type, "Bearer") || !safeToken(v.Access) || v.Expires < 61 || v.Expires > 86400 || v.Refresh != "" && !safeToken(v.Refresh) || v.Scope != "" && v.Scope != youtube.ReadScope {
-		return GoogleCredential{}, videos.FailureCode("refresh_uncertain")
+	if json.Unmarshal(raw, &v) != nil || !strings.EqualFold(v.Type, "Bearer") || !safeToken(v.Access) || v.Expires < 61 || v.Expires > 86400 || v.Refresh != "" && !safeToken(v.Refresh) || requireRefresh && v.Refresh == "" || v.Scope != "" && v.Scope != current.Scope {
+		return GoogleCredential{}, videos.FailureCode(uncertain)
 	}
 	// RFC6749 permits omitting scope when unchanged. Never infer a broader scope.
 	next := current
-	next.AccessToken, next.Scope, next.ExpiresAt = v.Access, youtube.ReadScope, time.Now().Add(time.Duration(v.Expires)*time.Second)
+	next.AccessToken, next.ExpiresAt = v.Access, time.Now().Add(time.Duration(v.Expires)*time.Second)
 	if v.Refresh != "" {
 		next.RefreshToken = v.Refresh
 	}

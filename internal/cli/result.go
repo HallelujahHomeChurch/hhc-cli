@@ -55,6 +55,20 @@ func classify(err error) (string, string, int, bool) {
 		switch queryFailure.Code {
 		case "authentication_required":
 			return "authentication_required", "需要執行器提供有效的唯讀授權。", 3, false
+		case "state_changed":
+			return "state_changed", "影片內容或預覽已變更，請重新讀取並檢查差異。", 5, false
+		case "mutation_uncertain", "verification_failed":
+			return queryFailure.Code, "寫入結果尚未確認；請唯讀查詢比對，不要自動重送。", 6, false
+		case "invalid_metadata", "unsupported_metadata":
+			return queryFailure.Code, "影片資料無法安全更新，未確認套用。", 5, false
+		case "rate_limited":
+			return "rate_limited", "YouTube 配額或速率限制；本次不自動重送編輯。", 6, false
+		case "not_found":
+			return "not_found", "找不到已授權頻道的指定影片。", 5, false
+		case "permission_or_quota_denied":
+			return "permission_or_quota_denied", "YouTube 權限或配額不足；請由授權擁有者確認。", 4, false
+		case "resource_denied":
+			return "resource_denied", "指定影片不在已授權的頻道範圍。", 4, false
 		case "permission_denied":
 			return "permission_denied", "提供的授權不符合來源或唯讀權限。", 4, false
 		}

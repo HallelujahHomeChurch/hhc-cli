@@ -1,7 +1,7 @@
-# Read-only video queries
+# Video queries and limited YouTube metadata editing
 
 The `hhc videos` domain shares bounded Go query logic across thin CLI commands,
-separate HHC/YouTube providers and a read-only HTTP transport. It does not start
+separate HHC/YouTube providers and a bounded read-only query transport. It does not start
 a server, database, media tool or recording cleanup. Existing recording command
 paths, profiles, journals and JSON schema v1 remain compatible.
 
@@ -34,6 +34,10 @@ and observed time. `published` means a current public HHC observation;
 channel inventory. Private YouTube search uses authorized `forMine=true`; the
 provider checks every result against the explicitly approved channel.
 
+For explicit YouTube title/description/tag changes, see
+[metadata editing](youtube-metadata.md). For browser consent and secure cloud
+grant ownership, see [Google OAuth](google-oauth.md).
+
 ## Private credentials
 
 `--credentials-stdin` consumes one strict JSON object, at most 16 KiB, from an
@@ -48,7 +52,8 @@ not a credential file template to save:
 | `hhc` | `accessToken`, `scope`, `principalType`, `expiresAt` |
 
 `expiresAt` is RFC3339 and must be in the future within 24 hours. YouTube scope
-is exactly `https://www.googleapis.com/auth/youtube.readonly`; channelId must
+is exactly `https://www.googleapis.com/auth/youtube.readonly` or the explicitly
+consented `https://www.googleapis.com/auth/youtube.force-ssl`; channelId must
 be the approved `UC...` channel. HHC requires `principalType=human` and
 `cms:pages:read` (optionally `offline_access`), not a recording-service token.
 The descriptor is a trusted executor assertion; Google/HHC remain authoritative
@@ -67,7 +72,7 @@ For optional public YouTube queries, an approved executor may inject
 private access. A private YouTube descriptor overrides that public configuration
 without falling back after OAuth denial.
 
-`internal/videoauth` also retains a reusable Google readonly refresh adapter.
+`internal/videoauth` also retains a reusable Google refresh adapter.
 It exchanges only with Google's fixed HTTPS token endpoint, refuses redirects,
 never retries ambiguous refreshes, and returns any rotated credential to its
 owner. It is not invoked implicitly by `hhc videos`. An approved credential

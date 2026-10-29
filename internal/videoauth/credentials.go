@@ -75,7 +75,7 @@ func (c Credentials) Validate(now time.Time) error {
 		if !safeToken(v.AccessToken) || !youtube.ValidChannel(v.ChannelID) {
 			return videos.ErrInput
 		}
-		if v.Scope != youtube.ReadScope {
+		if !validGoogleScope(v.Scope) {
 			return videos.FailureCode("permission_denied")
 		}
 		if err := expiry(v.ExpiresAt, now); err != nil {

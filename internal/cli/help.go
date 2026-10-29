@@ -79,7 +79,7 @@ func helpRequested(args []string) bool {
 		name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		// These existing flags consume their next argv element even if it starts
 		// with '-'. Match flag.FlagSet semantics; titles/scopes remain literal data.
-		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "cover", "operation-id", "output", "timeout", "directory", "query", "source", "limit", "max-pages", "locale"}, name) {
+		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "cover", "operation-id", "output", "timeout", "directory", "query", "source", "limit", "max-pages", "locale", "description", "tags-json", "if-match", "plan-hash"}, name) {
 			i++
 		}
 	}
@@ -87,11 +87,12 @@ func helpRequested(args []string) bool {
 }
 
 var commandHelp = map[string]string{
-	"videos": `唯讀影片查詢
+	"videos": `影片查詢與限定編輯
 
   search   搜尋 HHC／YouTube 影片
   get      依來源 ID 讀取資料
   compare  依 YouTube ID 比對網站公開狀態
+  edit     預覽／套用 YouTube 標題、說明、標籤
 
 公開 HHC 不需登入；私有 YouTube／HHC 使用已授權執行器的私有憑證 pipe。
 結果的 incomplete、complete、coverage 與 error 必須一併判讀。`,
@@ -121,6 +122,22 @@ HHC 公開清單在分頁上限內本機過濾。部分來源失敗以 incomplet
   --limit／--max-pages／--locale／--timeout 同 search
 
 僅用精確 youtubeVideoId；not_observed 不代表草稿、刪除或不存在。`,
+
+	"videos edit": `限定編輯 YouTube 中繼資料
+
+範例：hhc videos edit youtube:abcdefghijk --title "新標題" --dry-run --credentials-stdin --json
+  --title TEXT         只修改標題
+  --description TEXT   只修改說明；空字串明確清除
+  --tags-json JSON     JSON 字串陣列；[] 明確清除
+  --dry-run            讀取並預覽差異，預設行為
+  --apply              明確套用一次；需帶回預覽的兩個前提
+  --if-match ETAG      預覽的 ETag
+  --plan-hash HASH     預覽的 planHash
+  --credentials-stdin  私有 pipe 的已授權 youtube.force-ssl 憑證
+  --timeout DURATION   最多 30s，預設 30s
+
+保留分類與其他 snippet 欄位，使用 If-Match，套用後獨立讀回。
+不確定結果不可自動重送。沒有上傳、刪除或隱私／發布變更指令。`,
 
 	"auth": `帳號操作
 

@@ -14,6 +14,9 @@ import (
 
 const Origin = "https://www.googleapis.com"
 const ReadScope = "https://www.googleapis.com/auth/youtube.readonly"
+const EditScope = "https://www.googleapis.com/auth/youtube.force-ssl"
+
+func QueryScope(scope string) bool { return scope == ReadScope || scope == EditScope }
 
 var channelPattern = regexp.MustCompile(`^UC[A-Za-z0-9_-]{22}$`)
 
@@ -58,7 +61,7 @@ func (p *Provider) headers() (http.Header, error) {
 		return nil, videos.FailureCode("permission_denied")
 	}
 	if p.Grant.Bearer != "" {
-		if strings.TrimSpace(p.Grant.Scope) != ReadScope || strings.ContainsAny(p.Grant.Bearer, "\r\n") {
+		if !QueryScope(p.Grant.Scope) || strings.ContainsAny(p.Grant.Bearer, "\r\n") {
 			return nil, videos.FailureCode("permission_denied")
 		}
 		h.Set("Authorization", "Bearer "+p.Grant.Bearer)
@@ -133,7 +136,7 @@ func (p *Provider) Search(ctx context.Context, in videos.Input) (videos.Page, er
 	seenIDs := map[string]bool{}
 	for page := 0; page < in.MaxPages; page++ {
 		q := url.Values{"part": {"snippet"}, "type": {"video"}, "channelId": {p.Grant.ChannelID}, "maxResults": {"50"}, "q": {in.Query}, "pageToken": {token}}
-		// OAuth search is restricted to the owner's channel and youtube.readonly.
+		// OAuth search is restricted to the owner's approved channel.
 		if p.Grant.Bearer != "" {
 			q.Set("forMine", "true")
 		}

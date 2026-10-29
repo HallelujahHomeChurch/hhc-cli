@@ -44,6 +44,9 @@ func videoService(credentials videoauth.Credentials) videos.Service {
 	return service
 }
 func runVideos(ctx context.Context, args []string, c *commandContext) int {
+	if len(args) > 0 && args[0] == "edit" {
+		return runVideoEdit(ctx, args[1:], c)
+	}
 	if len(args) == 0 {
 		return c.finish(auth.ErrInvalidAuthInput)
 	}

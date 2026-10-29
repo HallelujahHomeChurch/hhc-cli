@@ -151,3 +151,58 @@ func TestPrivateVideoCompositionOverridesPublicWithoutFallback(t *testing.T) {
 		t.Fatalf("denial caused fallback: %+v %v calls=%d", result, err, calls)
 	}
 }
+
+func TestMetadataCLIExplicitApplyAndScopeBoundaries(t *testing.T) {
+	for _, apply := range []bool{false, true} {
+		t.Run(fmt.Sprint(apply), func(t *testing.T) {
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			descriptor := map[string]any{"youtube": map[string]any{"accessToken": "fixture-edit-token", "scope": youtube.EditScope, "channelId": "UCabcdefghijklmnopqrstuv", "expiresAt": time.Now().Add(time.Hour)}}
+			raw, _ := json.Marshal(descriptor)
+			go func() { defer w.Close(); w.Write(raw) }()
+			var out bytes.Buffer
+			called := false
+			c := &commandContext{input: r, output: &out, diagnostics: io.Discard, result: result{SchemaVersion: 1}, videoEdit: func(_ context.Context, id string, patch youtube.Patch, actualApply bool, etag, hash string, credentials videoauth.Credentials) (youtube.EditResult, error) {
+				called = true
+				if id != "abcdefghijk" || patch.Title == nil || *patch.Title != "新標題" || patch.Description != nil || patch.Tags != nil || actualApply != apply || credentials.YouTube.Scope != youtube.EditScope {
+					t.Error("metadata intent changed")
+				}
+				if apply && (etag != "fixture-etag" || hash != strings.Repeat("a", 64)) {
+					t.Error("preview preconditions lost")
+				}
+				return youtube.EditResult{DryRun: !apply, Outcome: "planned"}, nil
+			}}
+			args := []string{"edit", "youtube:abcdefghijk", "--title", "新標題", "--credentials-stdin", "--json", "--no-input"}
+			if apply {
+				args = append(args, "--apply", "--if-match", "fixture-etag", "--plan-hash", strings.Repeat("a", 64))
+			}
+			if exit := runVideos(context.Background(), args, c); exit != 0 || !called {
+				t.Fatal(exit, out.String())
+			}
+			if strings.Contains(out.String(), "fixture-edit-token") {
+				t.Fatal("edit leaked credential")
+			}
+		})
+	}
+	for _, args := range [][]string{
+		{"edit", "hhc:abc", "--title", "new"},
+		{"edit", "youtube:abcdefghijk", "--privacy", "public"},
+		{"edit", "youtube:abcdefghijk", "--title", "new", "--apply"},
+		{"edit", "youtube:abcdefghijk", "--tags-json", "null"},
+		{"edit", "youtube:abcdefghijk", "--title", "new", "--apply", "--dry-run"},
+	} {
+		var out bytes.Buffer
+		c := &commandContext{output: &out, diagnostics: io.Discard, result: result{SchemaVersion: 1}}
+		if exit := runVideos(context.Background(), append(args, "--json"), c); exit != 2 {
+			t.Fatalf("unsafe edit accepted: %v %d", args, exit)
+		}
+	}
+	var out bytes.Buffer
+	c := &commandContext{input: privateQueryPipe(t, time.Now().Add(time.Hour)), output: &out, diagnostics: io.Discard, result: result{SchemaVersion: 1}}
+	if exit := runVideos(context.Background(), []string{"edit", "youtube:abcdefghijk", "--title", "new", "--credentials-stdin", "--json"}, c); exit != 4 {
+		t.Fatalf("readonly edit scope accepted: %d %s", exit, out.String())
+	}
+}

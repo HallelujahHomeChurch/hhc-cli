@@ -121,7 +121,7 @@ func bootstrapDownloaded(ctx context.Context, directory string, m Manifest, a Ar
 	if err = os.MkdirAll(skill, 0700); err != nil {
 		return err
 	}
-	const loader = "---\nname: hhc\ndescription: Use when operating an installed HHC CLI for church recordings.\n---\n\nRead ../../current.json relative to this skill directory. Read the full\n../../versions/<current>/skills/hhc/SKILL.md for that current version, then follow\nits referenced commands. Do not treat directory listings as the active version.\nUse this skill in place; a copied loader cannot resolve the installation.\n"
+	const loader = "---\nname: hhc\ndescription: Use an installed HHC CLI for video queries, authorized YouTube metadata edits, and church recordings.\n---\n\nRead ../../current.json relative to this skill directory. Read the full\n../../versions/<current>/skills/hhc/SKILL.md for that current version, then follow\nits referenced commands. Do not treat directory listings as the active version.\nUse this skill in place; a copied loader cannot resolve the installation.\n"
 	if err = os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte(loader), 0600); err != nil {
 		return err
 	}
