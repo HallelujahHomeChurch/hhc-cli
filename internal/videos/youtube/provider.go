@@ -15,8 +15,11 @@ import (
 const Origin = "https://www.googleapis.com"
 const ReadScope = "https://www.googleapis.com/auth/youtube.readonly"
 const EditScope = "https://www.googleapis.com/auth/youtube.force-ssl"
+const ManageScope = "https://www.googleapis.com/auth/youtube"
 
-func QueryScope(scope string) bool { return scope == ReadScope || scope == EditScope }
+func EditableScope(scope string) bool { return scope == EditScope || scope == ManageScope }
+
+func QueryScope(scope string) bool { return scope == ReadScope || EditableScope(scope) }
 
 var channelPattern = regexp.MustCompile(`^UC[A-Za-z0-9_-]{22}$`)
 

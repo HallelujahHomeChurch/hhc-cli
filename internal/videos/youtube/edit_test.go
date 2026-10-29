@@ -316,3 +316,17 @@ func TestMetadataCancellationBeforeAndDuringWrite(t *testing.T) {
 		t.Fatalf("cancelled write lost uncertainty: %+v %v attempts=%d", result, err, attempts)
 	}
 }
+
+func TestMetadataEditAcceptsExplicitDeviceManageScope(t *testing.T) {
+	p, _ := newEditFixture(t)
+	p.Grant.Scope = ManageScope
+	patch := titlePatch("Device edit")
+	plan, err := p.PlanEdit(context.Background(), "abcdefghijk", patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := p.ApplyEdit(context.Background(), "abcdefghijk", patch, plan.ETag, plan.PlanHash)
+	if err != nil || !result.RequestedActionSatisfied {
+		t.Fatal(err, result)
+	}
+}

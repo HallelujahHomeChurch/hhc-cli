@@ -51,7 +51,9 @@ YouTube providers. `commands_video_edit.go` handles explicit metadata edits;
 `internal/videos/youtube` owns snippet preservation, ETag preconditions and
 read-back verification. `internal/queryhttp` owns bounded read-only HTTP;
 `internal/videoauth` owns private-pipe credential validation and the reusable
-Google OAuth lifecycle adapters. No query command initializes media, recording
+Google OAuth lifecycle adapters. `commands_youtube_device.go` owns explicit
+headless device login and a bounded process-only video session, with credentials
+kept in memory and no network listener or persistent token storage. No query command initializes media, recording
 journals or the native recordings profile. Keep provider credentials scoped to
 one invocation and source. See [video queries](video-query.md) and the
 [HHC skill](../skills/hhc/SKILL.md).

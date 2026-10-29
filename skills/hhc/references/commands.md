@@ -157,8 +157,8 @@ shell literal, command argument or chat message.
 
 The credential owner must supply a bounded JSON descriptor using the exact
 credential contract below:
-YouTube reads require a current `youtube.readonly` or explicitly consented
-`youtube.force-ssl` access token and approved channel;
+YouTube reads require a current `youtube.readonly`, explicitly consented
+`youtube.force-ssl` or `youtube` access token and approved channel;
 private HHC requires a current human `cms:pages:read` token. The CLI does not
 refresh or persist tokens automatically. An API key grants only public access.
 
@@ -182,8 +182,8 @@ test, a skill file, fixture credentials, or an ephemeral workspace alone.
 
 Use only for explicitly requested title/description/tag changes to one exact
 video in the approved channel. Use the metadata contract below.
-The runtime must inject an explicitly consented force-ssl access descriptor
-through private child stdin. Do not send credentials in argv or user messages.
+Use the current device edit session, or an explicitly consented force-ssl/youtube
+access descriptor through private child stdin. Do not send credentials in argv or user messages.
 
 Preview as literal argv:
 
@@ -211,37 +211,71 @@ On conflict obtain a new preview and check changed context; do not force the
 old edit through. On uncertain result, a new dry-run may reconcile current
 metadata, but never automatically repeat `--apply`.
 
-OAuth consent is separate from each mutation's user intent. Google force-ssl
+OAuth consent is separate from each mutation's user intent. Google edit
 permissions exceed these CLI actions; explain the actual consent scope.
 Do not trigger real consent, grant creation or a production write as a fixture
 test. Keep private diffs/results inside the authorized destination.
 
 ## Google OAuth and cloud execution
 
-Use the OAuth/runtime contract below.
-The supported experience needs an existing approved Google client and browser
-callback/credential owner. Protocol code and a skill file alone do not provide
-that connection. Never ask the user to paste tokens or authorization codes.
+Use browserless Device Authorization Flow after explicit approval for client,
+channel and scope. An existing correctly registered TVs and Limited Input client
+accepted by Google is required. The runtime must securely inject the fixed direct
+variable HHC_YOUTUBE_DEVICE_CLIENT_SECRET through its supported setup UI. Never
+print its value, put it in argv/history, or create a client/grant as a test.
 
-- Readonly grant: exactly `https://www.googleapis.com/auth/youtube.readonly`.
-- Metadata-edit grant: explicitly `https://www.googleapis.com/auth/youtube.force-ssl`;
-  Google permits more than this CLI's title/description/tag surface.
-- Keep scopes, client identity and approved channel separate from HHC Account.
-- Use state, PKCE and the already registered callback through the supported
-  connection. The repository code creates no callback server or persistent store.
-- Preserve the in-memory authorization session until callback completion;
-  separate CLI invocations cannot resume it. An iPhone loopback address cannot
-  deliver a callback to a cloud executor. Do not use OOB or pasted-code flows.
-- Require secure owner storage, refresh serialization/replacement, revocation
-  handling and short-lived credential injection. Native Mac credentials do not
-  establish this cloud route. Vault/network-secret configuration alone is not
-  an OAuth consent or automatic refresh integration.
+One login and one requested operation (only public IDs are placeholders):
 
-If the selected runtime lacks this connection, report the exact absent callback,
-credential owner or grant/injection capability and request user-controlled setup
-through a supported UI. Do not invent a connection, create infrastructure,
-search secrets or replace private access with public-only results. Do not claim
-working iPhone/Mac-offline access from fixtures or an ephemeral executor alone.
+```json
+["hhc", "auth", "youtube-device", "--client-id", "DEVICE_CLIENT_ID", "--channel-id", "UCabcdefghijklmnopqrstuv", "--access", "read", "--json", "--", "videos", "search", "--source", "youtube", "--query", "聚會", "--limit", "10"]
+```
+
+For lookup, edit preview and a separately authorized apply in one process:
+
+```json
+["hhc", "auth", "youtube-device", "--client-id", "DEVICE_CLIENT_ID", "--channel-id", "UCabcdefghijklmnopqrstuv", "--access", "edit", "--session", "--json"]
+```
+
+Present the exact Google verification URL and user code from stderr to the user.
+Keep that same cloud process alive while they sign in on their phone; never
+start a second login merely because the first is pending. No callback server,
+browser automation, Mac, or pasted token/authorization code is needed.
+
+- Device read: exact youtube.readonly scope.
+- Device edit: explicitly the broader https://www.googleapis.com/auth/youtube.
+- force-ssl is not on Google's restricted device-flow scope list; it remains
+  usable for separately injected/code-flow credentials. Do not silently broaden.
+- Google permissions exceed the implemented metadata actions. Consent alone
+  does not authorize changing a specific video.
+
+After session login, stdout emits metadata marked persistence=process_only.
+Send newline-delimited arrays to the retained process's stdin (these are session
+argv records, not shell or MCP calls). Use the actual preview ETag/hash:
+
+```jsonl
+["videos","get","youtube:abcdefghijk"]
+["videos","edit","youtube:abcdefghijk","--title","新標題","--dry-run"]
+["videos","edit","youtube:abcdefghijk","--title","新標題","--apply","--if-match","ACTUAL_ETAG","--plan-hash","ACTUAL_64_CHARACTER_HASH"]
+["exit"]
+```
+
+Read every schema-v1 result line. Session final exit0 does not prove all prior
+commands succeeded. Only video search/get/compare/edit is supported; no shell,
+recording commands or credentials-stdin within the session. Never replay an
+uncertain write; that session blocks further applies but permits read-only
+reconciliation. Do not start another session to bypass the fence.
+
+Login wait defaults15m/max30m; session defaults1h/max4h and100 commands. EOF,
+exit/cancellation/timeout discards all memory credentials. No user token is
+stored in a file, environment variable, native profile or personal keychain.
+A process-only owner serializes refresh and fences old grants before exchange;
+uncertain refresh ends usable authorization rather than replaying old tokens.
+
+Cross-task token reuse is not implemented. A new process needs fresh sign-in
+unless a separately approved durable owner adapter is available. Ephemeral
+workspace files are not secure persistence or an availability guarantee. Such
+storage is not required for useful per-process device login and operation.
+Actual Google acceptance/private operations remain separate from fixtures.
 
 ### Private credential descriptor
 
@@ -254,8 +288,8 @@ The `youtube` descriptor requires `accessToken`, exact `scope`, approved
 Expiry must be in the future within 24 hours. Do not save or print a descriptor,
 accept a pasted token, or search native stores. HHC/Google enforce actual token
 ownership/audience/permission/revocation; the descriptor is supplied by the
-approved credential owner. Google readonly and force-ssl are the only accepted
-Google scopes; edits require force-ssl. Credentials and private results are
+approved credential owner. Exact Google readonly, force-ssl or youtube scopes are accepted; edits require
+force-ssl or explicitly consented youtube. Credentials and private results are
 source/caller specific and may be disclosed only to their authorized destination.
 
 ### Metadata preservation and uncertainty
@@ -272,13 +306,14 @@ the current differences without mutating; never automatically resend the PUT.
 
 ### OAuth owner prerequisites
 
-The existing supported connection must retain the in-memory PKCE/state session
-through callback completion and securely commit the returned Google grant.
-It must serialize refresh, commit rotated tokens and fence uncertain refreshes
-instead of replaying old credentials. Explicit revocation must first disable
-further local grant use. The repository implements these Google protocol calls,
-but creates no browser/callback receiver, persistent store or working CLI login.
-Codex Cloud variables/network secrets can hold already-provisioned values; they
-do not themselves establish Google consent or automatic token replacement.
-Select a supported owner/callback/injection route before requesting real user
-consent. Do not add callback infrastructure or use OOB/pasted-code workarounds.
+Device login owns its verified grant only within the current process and needs
+no callback or persistent store. Configure the existing device client securely
+and obtain explicit user consent; the CLI receives the grant directly. Existing
+Cloud direct variables can deliver client configuration through approved setup,
+but do not themselves save or rotate user grants.
+
+Cross-task reuse would require an approved durable owner with secure replacement,
+refresh coordination and no stale-token replay. Optional authorization-code/PKCE
+integration still needs its registered callback. Never create that infrastructure
+as an implicit CLI operation. Google revocation can affect the user's project
+grant across clients/scopes; do not revoke as automatic session cleanup.

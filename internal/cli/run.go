@@ -28,6 +28,9 @@ type commandContext struct {
 	progress            *progressDisplay
 	videoQuery          videoQuery
 	videoEdit           videoEdit
+	videoCredential     videoCredential
+	deviceLogin         deviceLogin
+	videoRefresh        videoRefresh
 }
 
 type commandGroup struct {

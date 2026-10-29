@@ -20,7 +20,7 @@ func editVideo(ctx context.Context, id string, patch youtube.Patch, apply bool, 
 	if grant == nil {
 		return youtube.EditResult{}, videos.FailureCode("authentication_required")
 	}
-	if grant.Scope != youtube.EditScope {
+	if !youtube.EditableScope(grant.Scope) {
 		return youtube.EditResult{}, videos.FailureCode("permission_denied")
 	}
 	client := queryhttp.New(youtube.Origin)
@@ -74,7 +74,7 @@ func runVideoEdit(ctx context.Context, args []string, c *commandContext) int {
 	if err := patch.Validate(); err != nil {
 		return c.finish(err)
 	}
-	if !*credentialsStdin {
+	if !*credentialsStdin && c.videoCredential == nil {
 		return c.finish(videos.FailureCode("authentication_required"))
 	}
 	unlock, err := lockInstallation()
@@ -84,11 +84,19 @@ func runVideoEdit(ctx context.Context, args []string, c *commandContext) int {
 	defer unlock()
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	credentials, err := videoauth.Read(ctx, c.input)
+	var credentials videoauth.Credentials
+	if c.videoCredential != nil {
+		if *credentialsStdin {
+			return c.finish(videos.ErrInput)
+		}
+		credentials, err = c.videoCredential(ctx)
+	} else {
+		credentials, err = videoauth.Read(ctx, c.input)
+	}
 	if err != nil {
 		return c.finish(err)
 	}
-	if credentials.YouTube == nil || credentials.YouTube.Scope != youtube.EditScope {
+	if credentials.YouTube == nil || !youtube.EditableScope(credentials.YouTube.Scope) {
 		return c.finish(videos.FailureCode("permission_denied"))
 	}
 	run := editVideo

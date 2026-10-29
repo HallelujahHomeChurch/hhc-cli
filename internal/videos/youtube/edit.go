@@ -106,7 +106,7 @@ func (p *Provider) editSnapshot(ctx context.Context, id string) (metadataSnapsho
 	if !videos.ValidYouTubeID(id) {
 		return metadataSnapshot{}, videos.ErrInput
 	}
-	if p.Grant.Bearer == "" || p.Grant.Scope != EditScope {
+	if p.Grant.Bearer == "" || !EditableScope(p.Grant.Scope) {
 		return metadataSnapshot{}, videos.FailureCode("permission_denied")
 	}
 	h, err := p.headers()

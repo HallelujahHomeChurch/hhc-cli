@@ -34,7 +34,9 @@ and observed time. `published` means a current public HHC observation;
 channel inventory. Private YouTube search uses authorized `forMine=true`; the
 provider checks every result against the explicitly approved channel.
 
-For explicit YouTube title/description/tag changes, see
+For browserless Google login with URL/code and a useful process-only session,
+see [device sign-in](google-oauth.md). It needs no callback or persistent token
+store for that session. For explicit YouTube title/description/tag changes, see
 [metadata editing](youtube-metadata.md). For browser consent and secure cloud
 grant ownership, see [Google OAuth](google-oauth.md).
 
@@ -53,7 +55,8 @@ not a credential file template to save:
 
 `expiresAt` is RFC3339 and must be in the future within 24 hours. YouTube scope
 is exactly `https://www.googleapis.com/auth/youtube.readonly` or the explicitly
-consented `https://www.googleapis.com/auth/youtube.force-ssl`; channelId must
+consented `https://www.googleapis.com/auth/youtube.force-ssl` or
+`https://www.googleapis.com/auth/youtube`; channelId must
 be the approved `UC...` channel. HHC requires `principalType=human` and
 `cms:pages:read` (optionally `offline_access`), not a recording-service token.
 The descriptor is a trusted executor assertion; Google/HHC remain authoritative
@@ -75,9 +78,10 @@ without falling back after OAuth denial.
 `internal/videoauth` also retains a reusable Google refresh adapter.
 It exchanges only with Google's fixed HTTPS token endpoint, refuses redirects,
 never retries ambiguous refreshes, and returns any rotated credential to its
-owner. It is not invoked implicitly by `hhc videos`. An approved credential
-owner must serialize refresh, securely commit replacement tokens, fence an
-uncertain exchange, and obtain new consent when revoked. This repository does
+owner. Standalone `hhc videos` does not refresh injected credentials. The device
+process-only session serializes refresh, replaces tokens only in memory and
+fences uncertain exchanges. A separately approved durable owner would also
+need secure persistence/replacement and recovery without old-token replay. This repository does
 not add a persistent store, OAuth client registration or consent grant.
 
 ## On-demand agent execution
@@ -92,8 +96,9 @@ it does not acquire or persist them.
 A cloud executor can run independently of a personal Mac when it is actually
 available and callable from the current conversation. An ephemeral workspace,
 passing unit test or successful public request establishes neither durable
-credentials nor future availability. Confirm the selected runtime's supported
-credential owner/injection route before claiming private cloud access.
+credentials nor future availability. Device sign-in can directly authorize private access for that process after
+approved client setup and consent. Cross-task grant reuse still needs a supported
+durable owner; it is not established by a workspace or an injected access token.
 Linux native recording credential storage still fails closed; never add a
 plaintext fallback. No new always-on compute is required by these CLI commands.
 Existing executor usage, API quota and platform charges depend on that platform.

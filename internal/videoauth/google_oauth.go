@@ -199,7 +199,7 @@ func (g *GoogleOAuth) Complete(ctx context.Context, s *GoogleSession, callbackUR
 		return GoogleCredential{}, videos.FailureCode("oauth_exchange_uncertain")
 	}
 	current := GoogleCredential{ClientID: g.config.ClientID, ClientSecret: g.config.ClientSecret, Scope: g.config.Scope, ChannelID: g.config.ChannelID}
-	grant, err := googleTokenResponse(resp, current, "oauth_exchange_uncertain", true)
+	grant, err := googleTokenResponse(resp, current, "oauth_exchange_uncertain", true, false)
 	if err != nil {
 		return GoogleCredential{}, err
 	}

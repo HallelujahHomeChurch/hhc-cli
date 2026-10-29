@@ -15,7 +15,7 @@ import (
 	"github.com/HallelujahHomeChurch/hhc-cli/internal/videos/youtube"
 )
 
-// GoogleCredential belongs to an explicit OAuth/storage integration, never the
+// GoogleCredential belongs to an explicit OAuth/session integration, never the
 // query command's stdin contract. It is not loaded from disk or environment.
 type GoogleCredential struct {
 	ClientID     string
@@ -32,10 +32,11 @@ func (v GoogleCredential) GoString() string { return v.String() }
 
 // GoogleRefresh exchanges one already-authorized exact read or edit refresh token.
 // It does not create consent, coordinate concurrent processes or persist tokens.
-// Before calling, an approved credential owner must durably fence and serialize
-// the exchange; before using its result it must securely commit rotated tokens.
+// An approved owner must fence and serialize the exchange. A process-only owner
+// discards its grant on process death; a persistent owner must durably commit the
+// fence and replacement before use. No such persistent owner is provided here.
 // After an ambiguous result the owner must not replay the previous refresh token.
-// The CLI intentionally does not invoke this adapter implicitly.
+// Ordinary injected-token video commands never invoke this adapter implicitly.
 type GoogleRefresh struct {
 	http     *http.Client
 	endpoint string
@@ -76,16 +77,16 @@ func (r *GoogleRefresh) Refresh(ctx context.Context, current GoogleCredential) (
 		}
 		return GoogleCredential{}, videos.FailureCode("refresh_uncertain")
 	}
-	return googleTokenResponse(resp, current, "refresh_uncertain", false)
+	return googleTokenResponse(resp, current, "refresh_uncertain", false, false)
 }
 
 func validGoogleScope(scope string) bool {
-	return scope == youtube.ReadScope || scope == "https://www.googleapis.com/auth/youtube.force-ssl"
+	return scope == youtube.ReadScope || scope == "https://www.googleapis.com/auth/youtube.force-ssl" || scope == "https://www.googleapis.com/auth/youtube"
 }
 
 // Parse only Google's bounded token response; scope omission means the exact
 // requested scope remains unchanged, never an inferred permission increase.
-func googleTokenResponse(resp *http.Response, current GoogleCredential, uncertain string, requireRefresh bool) (GoogleCredential, error) {
+func googleTokenResponse(resp *http.Response, current GoogleCredential, uncertain string, requireRefresh, requireScope bool) (GoogleCredential, error) {
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		return GoogleCredential{}, videos.FailureCode(uncertain)
@@ -96,13 +97,14 @@ func googleTokenResponse(resp *http.Response, current GoogleCredential, uncertai
 		return GoogleCredential{}, videos.FailureCode(uncertain)
 	}
 	var v struct {
-		Access  string `json:"access_token"`
-		Refresh string `json:"refresh_token"`
-		Scope   string `json:"scope"`
-		Expires int64  `json:"expires_in"`
-		Type    string `json:"token_type"`
+		Access  string          `json:"access_token"`
+		Refresh string          `json:"refresh_token"`
+		Scope   string          `json:"scope"`
+		Expires int64           `json:"expires_in"`
+		Type    string          `json:"token_type"`
+		Error   json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(raw, &v) != nil || !strings.EqualFold(v.Type, "Bearer") || !safeToken(v.Access) || v.Expires < 61 || v.Expires > 86400 || v.Refresh != "" && !safeToken(v.Refresh) || requireRefresh && v.Refresh == "" || v.Scope != "" && v.Scope != current.Scope {
+	if json.Unmarshal(raw, &v) != nil || len(v.Error) > 0 || !strings.EqualFold(v.Type, "Bearer") || !safeToken(v.Access) || v.Expires < 61 || v.Expires > 86400 || v.Refresh != "" && !safeToken(v.Refresh) || requireRefresh && v.Refresh == "" || requireScope && v.Scope == "" || v.Scope != "" && v.Scope != current.Scope {
 		return GoogleCredential{}, videos.FailureCode(uncertain)
 	}
 	// RFC6749 permits omitting scope when unchanged. Never infer a broader scope.

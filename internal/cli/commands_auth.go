@@ -12,6 +12,9 @@ import (
 )
 
 func runAuth(ctx context.Context, args []string, c *commandContext) int {
+	if len(args) > 0 && args[0] == "youtube-device" {
+		return runYouTubeDevice(ctx, args[1:], c)
+	}
 	if len(args) < 1 || !slices.Contains([]string{"login", "status", "logout"}, args[0]) {
 		return c.finish(auth.ErrInvalidAuthInput)
 	}

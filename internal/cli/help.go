@@ -79,7 +79,7 @@ func helpRequested(args []string) bool {
 		name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		// These existing flags consume their next argv element even if it starts
 		// with '-'. Match flag.FlagSet semantics; titles/scopes remain literal data.
-		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "cover", "operation-id", "output", "timeout", "directory", "query", "source", "limit", "max-pages", "locale", "description", "tags-json", "if-match", "plan-hash"}, name) {
+		if strings.HasPrefix(arg, "-") && !inline && slices.Contains([]string{"profile", "client-id", "scope", "title", "cover", "operation-id", "output", "timeout", "directory", "query", "source", "limit", "max-pages", "locale", "description", "tags-json", "if-match", "plan-hash", "channel-id", "access", "login-timeout", "session-timeout"}, name) {
 			i++
 		}
 	}
@@ -133,7 +133,7 @@ HHC 公開清單在分頁上限內本機過濾。部分來源失敗以 incomplet
   --apply              明確套用一次；需帶回預覽的兩個前提
   --if-match ETAG      預覽的 ETag
   --plan-hash HASH     預覽的 planHash
-  --credentials-stdin  私有 pipe 的已授權 youtube.force-ssl 憑證
+  --credentials-stdin  私有 pipe 的已授權 youtube.force-ssl／youtube 憑證
   --timeout DURATION   最多 30s，預設 30s
 
 保留分類與其他 snippet 欄位，使用 If-Match，套用後獨立讀回。
@@ -144,8 +144,24 @@ HHC 公開清單在分頁上限內本機過濾。部分來源失敗以 incomplet
   login   登入（一般帳號開啟瀏覽器）
   status  查看登入狀態
   logout  登出
+  youtube-device  無瀏覽器 Google 裝置登入與本次程序的影片操作
 
 查看範例：hhc auth login -h`,
+	"auth youtube-device": `Google 無瀏覽器裝置登入
+
+範例：hhc auth youtube-device --client-id ID --channel-id UC... --access read --json -- videos search --source youtube --query 聚會
+  --client-id ID          既有 TVs and Limited Input devices OAuth client
+  --channel-id UC...       已核准的 YouTube 頻道
+  --access read|edit       read 預設；edit 明確要求較廣的 youtube scope
+  --session               登入後在同一程序接受影片 argv JSON，每行一個陣列
+  --login-timeout DURATION 授權等待預設 15m，最多 30m
+  --session-timeout DURATION session 預設 1h，最多 4h／100 個指令
+
+執行器需安全注入固定 HHC_YOUTUBE_DEVICE_CLIENT_SECRET 直接變數。
+網址與 user code 顯示於 stderr；device/access/refresh token 不輸出或保存。
+一次性模式以 -- 後指定 videos 指令；session 用 ["exit"] 結束。
+沒有 callback、瀏覽器自動化或 Mac 相依。程序結束後需重新登入。`,
+
 	"auth login": `登入帳號
 
 範例：hhc auth login --profile uploader

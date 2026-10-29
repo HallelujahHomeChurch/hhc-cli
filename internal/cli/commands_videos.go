@@ -110,7 +110,15 @@ func runVideos(ctx context.Context, args []string, c *commandContext) int {
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 	var credentials videoauth.Credentials
-	if *credentialsStdin {
+	if c.videoCredential != nil {
+		if *credentialsStdin {
+			return c.finish(videos.ErrInput)
+		}
+		credentials, err = c.videoCredential(ctx)
+		if err != nil {
+			return c.finish(err)
+		}
+	} else if *credentialsStdin {
 		credentials, err = videoauth.Read(ctx, c.input)
 		if err != nil {
 			return c.finish(err)

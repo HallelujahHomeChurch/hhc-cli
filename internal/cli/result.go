@@ -53,6 +53,14 @@ func classify(err error) (string, string, int, bool) {
 	var queryFailure *videos.Failure
 	if errors.As(err, &queryFailure) {
 		switch queryFailure.Code {
+		case "device_client_not_configured":
+			return "device_client_not_configured", "請先由執行器安全注入既有 Google device client secret。", 3, false
+		case "device_authorization_denied":
+			return "device_authorization_denied", "Google 裝置授權已拒絕，未登入。", 3, false
+		case "device_authorization_expired", "device_session_expired":
+			return queryFailure.Code, "本次裝置授權或程序 session 已到期；未保存 token。", 3, false
+		case "device_authorization_uncertain", "device_authorization_unavailable", "device_poll_timing", "device_session_used", "session_refresh_uncertain":
+			return queryFailure.Code, "本次 Google 授權狀態無法安全確認；不會重播代碼或憑證。", 6, false
 		case "authentication_required":
 			return "authentication_required", "需要執行器提供有效的唯讀授權。", 3, false
 		case "state_changed":

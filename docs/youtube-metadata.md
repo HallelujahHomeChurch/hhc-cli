@@ -9,9 +9,11 @@ authorization contract.
 ## Scope and explicit execution
 
 Google's [videos.update contract](https://developers.google.com/youtube/v3/docs/videos/update)
-accepts `youtube.force-ssl` (also broader alternatives). This integration accepts
-exactly `https://www.googleapis.com/auth/youtube.force-ssl` for metadata edits.
-That Google scope can authorize more API actions than this CLI exposes. Explain
+accepts `youtube.force-ssl` (also broader alternatives). This integration accepts exact `https://www.googleapis.com/auth/youtube.force-ssl`
+or `https://www.googleapis.com/auth/youtube` for metadata edits. Device login
+uses the latter only after explicit `--access edit`; force-ssl is not allowed
+by Google's restricted device-flow list.
+Those Google scopes can authorize more API actions than this CLI exposes. Explain
 the actual Google consent screen and obtain approval for that scope; never call
 it a metadata-only Google permission. The CLI's command surface restricts the
 implemented actions. Readonly scope is insufficient to edit; no automatic scope
